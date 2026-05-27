@@ -71,6 +71,7 @@ gabagool:
   max_concurrent_arbitrages: 6
   max_unpaired_exposure: 10.0
   snipe_shares: 10          # 10 × $0.85 = $8.50 max per snipe (matches g22 $9 cap)
+  snipe_cooldown_s: 45       # seconds between snipes on the same asset
 
   # Time limits
   holding_time_limit: 1800
