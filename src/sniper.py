@@ -45,6 +45,9 @@ SNIPE_ASK_BUFFER = 0.02
 # Never pay more than this per share when sniping.
 MAX_SNIPE_PRICE = 0.85
 
+# Maximum combined cost of the snipe pair (Snipe Price + Opposing Avg Cost)
+MAX_COMBINED_COST = 0.98
+
 # Minimum share ask price to consider worth sniping
 MIN_SNIPE_PRICE = 0.10
 
@@ -179,6 +182,29 @@ class Sniper:
                     success=False, direction=direction, price_paid=snipe_price,
                     shares=self.snipe_shares, order_id=None, cancels_fired=0,
                     latency_ms=latency_ms, error=f"price_too_low_{snipe_price:.2f}",
+                )
+
+            # ── Check if we have opposing inventory for a safe arbitrage ──
+            opposing_shares = summary.down_shares if direction == "UP" else summary.up_shares
+            opposing_avg_cost = summary.down_avg_cost if direction == "UP" else summary.up_avg_cost
+
+            if opposing_shares < self.snipe_shares:
+                latency_ms = (time.monotonic_ns() - start_ns) / 1e6
+                self.logger.warning("Snipe aborted — insufficient opposing shares (%d < %d)", opposing_shares, self.snipe_shares)
+                return SnipeResult(
+                    success=False, direction=direction, price_paid=snipe_price,
+                    shares=self.snipe_shares, order_id=None, cancels_fired=0,
+                    latency_ms=latency_ms, error="insufficient_opposing_shares",
+                )
+
+            combined_cost = snipe_price + opposing_avg_cost
+            if combined_cost > MAX_COMBINED_COST:
+                latency_ms = (time.monotonic_ns() - start_ns) / 1e6
+                self.logger.warning("Snipe aborted — combined cost too high ($%.3f + $%.3f = $%.3f > $%.3f)", snipe_price, opposing_avg_cost, combined_cost, MAX_COMBINED_COST)
+                return SnipeResult(
+                    success=False, direction=direction, price_paid=snipe_price,
+                    shares=self.snipe_shares, order_id=None, cancels_fired=0,
+                    latency_ms=latency_ms, error="combined_cost_too_high",
                 )
 
             # ── Phase 2: FIRE snipe + cancel opposing ─────────────────────

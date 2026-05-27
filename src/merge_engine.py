@@ -119,15 +119,10 @@ class MergeEngine:
         condition_id = market.id
 
         if self.dry_run:
-            # Reduce cost basis proportionally
-            up_avg = summary.up_total_cost / summary.up_shares if summary.up_shares else 0
-            down_avg = summary.down_total_cost / summary.down_shares if summary.down_shares else 0
-            
+            # We deduct the merged shares, but DO NOT reduce total_cost.
+            # Preserving the total_cost is required to accurately calculate Net PnL.
             summary.up_shares -= mergeable
             summary.down_shares -= mergeable
-            
-            summary.up_total_cost -= (mergeable * up_avg)
-            summary.down_total_cost -= (mergeable * down_avg)
             
             usdc = mergeable  # 1 pair = $1.00
             self._total_merged_usdc += usdc
