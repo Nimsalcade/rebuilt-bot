@@ -324,32 +324,37 @@ class Sniper:
     async def _fire_order(self, token_id: str, price: float) -> Optional[str]:
         """Place the snipe limit order. Returns order_id or None on failure."""
         if self.dry_run:
-            import random
             fake_id = f"snipe_{int(time.time() * 1000) % 100000}"
 
-            # Simulate realistic FOK fill rate.
-            # In real markets, an FOK at ask+buffer gets rejected ~50% of the
-            # time (book swept, price moved, insufficient depth at that level).
-            # This makes paper PnL closer to live expectations.
+            # Hard reject: price above our own configured ceiling
             if price > self.max_price:
                 self.logger.info(
                     "DRY RUN SNIPE: ❌ REJECTED (price $%.3f > max $%.3f) — FOK aborted",
                     price, self.max_price
                 )
-                return None  # FOK rejected: price too high
+                return None
 
-            if random.random() < 0.45:  # ~45% of FOK snipes fail in thin markets
+            # Probe the live Polymarket order book instead of using a random
+            # coin-flip.  _get_ask() already hits the real CLOB (read-only GET,
+            # same call used above to compute snipe_price), so we can check
+            # whether the ask is at or below our limit price right now.
+            # If the book shows liquidity at/below our price → simulate a fill.
+            # If the ask has moved above our price → simulate a FOK miss.
+            live_ask = await self._get_ask(token_id)
+            if live_ask is not None and price >= live_ask:
                 self.logger.info(
-                    "DRY RUN SNIPE: ❌ FOK FAILED (no liquidity at $%.3f) — simulated miss",
-                    price
+                    "DRY RUN SNIPE: ✅ FILLED %d shares @ $%.3f | ask=$%.3f | id=%s",
+                    self.snipe_shares, price, live_ask, fake_id
+                )
+                return fake_id
+            else:
+                current_ask_str = f"${live_ask:.3f}" if live_ask is not None else "n/a"
+                self.logger.info(
+                    "DRY RUN SNIPE: ❌ FOK FAILED (our price $%.3f < ask %s) — miss",
+                    price, current_ask_str
                 )
                 return None
 
-            self.logger.info(
-                "DRY RUN SNIPE: ✅ FILLED %d shares @ $%.3f | id=%s",
-                self.snipe_shares, price, fake_id
-            )
-            return fake_id
 
         try:
             result = await asyncio.to_thread(

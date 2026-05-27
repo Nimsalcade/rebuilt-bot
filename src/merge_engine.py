@@ -59,6 +59,12 @@ MIN_MERGE_SHARES = 50.0
 # How often to attempt merges per window (seconds) — don't spam the chain
 MERGE_COOLDOWN_S = 5.0
 
+# Sniper inventory reserve: always keep at least this many balanced shares on each
+# side AFTER merging so the sniper has opposing inventory to fire against on the
+# next spike.  Without this, an aggressive merge drains one side to 0 and the
+# sniper immediately aborts with "insufficient_opposing_shares".
+SNIPER_INVENTORY_RESERVE = 15.0
+
 
 @dataclass
 class MergeResult:
@@ -109,7 +115,14 @@ class MergeEngine:
 
         up_shares = summary.up_shares
         down_shares = summary.down_shares
-        mergeable = min(up_shares, down_shares)
+        # Keep SNIPER_INVENTORY_RESERVE balanced shares on each side so the
+        # sniper can still fire opposing-side coverage after a merge.  Only
+        # merge the surplus above that reserve; force=True (HOLD phase at
+        # window close) bypasses the reserve since no more snipes will fire.
+        if force:
+            mergeable = min(up_shares, down_shares)
+        else:
+            mergeable = max(0.0, min(up_shares, down_shares) - SNIPER_INVENTORY_RESERVE)
 
         if mergeable < MIN_MERGE_SHARES and not force:
             return MergeResult(success=False, merged_shares=0, usdc_returned=0,
