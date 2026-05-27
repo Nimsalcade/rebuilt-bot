@@ -163,11 +163,13 @@ class WindowFillSummary:
 
     up_fills:       int   = 0
     up_shares:      float = 0.0
-    up_total_cost:  float = 0.0
+    up_total_cost:    float = 0.0
+    up_gross_shares:  float = 0.0
 
     down_fills:       int   = 0
     down_shares:      float = 0.0
     down_total_cost:  float = 0.0
+    down_gross_shares: float = 0.0
 
     signal_direction:  Optional[str]   = None
     signal_confidence: float           = 0.0
@@ -182,11 +184,11 @@ class WindowFillSummary:
 
     @property
     def up_avg_cost(self) -> float:
-        return self.up_total_cost / self.up_shares if self.up_shares else 0.0
+        return self.up_total_cost / self.up_gross_shares if self.up_gross_shares else 0.0
 
     @property
     def down_avg_cost(self) -> float:
-        return self.down_total_cost / self.down_shares if self.down_shares else 0.0
+        return self.down_total_cost / self.down_gross_shares if self.down_gross_shares else 0.0
 
     @property
     def total_invested(self) -> float:
@@ -574,7 +576,12 @@ class MakerLoop:
         # Note: True settlement uses real outcome in paper trader
         cost = summary.total_invested
         merged = summary.merged_usdc
-        rough_net = merged - cost
+        
+        naked_payout = 0.0
+        if summary.signal_direction and naked_side == summary.signal_direction:
+            naked_payout = float(naked_sh)
+            
+        rough_net = (merged + naked_payout) - cost
         
         msg = terminal_ui.fmt_window_close(
             market_id=market_id,
@@ -1036,10 +1043,12 @@ class MakerLoop:
         if order.side == "UP":
             summary.up_fills      += 1
             summary.up_shares     += order.shares
+            summary.up_gross_shares += order.shares
             summary.up_total_cost += cost
         else:
             summary.down_fills      += 1
             summary.down_shares     += order.shares
+            summary.down_gross_shares += order.shares
             summary.down_total_cost += cost
 
         print(terminal_ui.fmt_fill(market_id, order.side, order.price, order.shares, cost), flush=True)

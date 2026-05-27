@@ -382,10 +382,12 @@ class Sniper:
         if direction == "UP":
             summary.up_fills += 1
             summary.up_shares += self.snipe_shares
+            summary.up_gross_shares += self.snipe_shares
             summary.up_total_cost += cost
         else:
             summary.down_fills += 1
             summary.down_shares += self.snipe_shares
+            summary.down_gross_shares += self.snipe_shares
             summary.down_total_cost += cost
 
         self.logger.info(
