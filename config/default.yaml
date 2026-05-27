@@ -1,0 +1,154 @@
+# Gabagool Bot - Default Configuration
+# Version: 1.0
+# Created: 2026-01-26
+#
+# This file contains default configuration values.
+# Override in production.yaml or via environment variables.
+#
+# Environment variables (prefix POLY_) take precedence over YAML:
+#   POLY_SAFE_ADDRESS, POLY_PRIVATE_KEY, POLY_RPC_URL, POLY_DRY_RUN
+
+# =============================================================================
+# WALLET CONFIGURATION
+# =============================================================================
+
+# Polymarket Safe/Proxy wallet address
+# Override with: POLY_SAFE_ADDRESS
+safe_address: ""
+
+# Polygon RPC URL (public default, use private for production)
+# Override with: POLY_RPC_URL
+rpc_url: "https://polygon-rpc.com"
+
+# =============================================================================
+# CLOB API CONFIGURATION
+# =============================================================================
+
+clob:
+  host: "https://clob.polymarket.com"
+  chain_id: 137               # Polygon mainnet
+  # Polymarket signature type for the funder address:
+  #   0 = EOA            (signing wallet IS the funder)
+  #   1 = POLY_PROXY     (Polymarket Proxy wallet, EIP-1167 minimal proxy — most accounts)
+  #   2 = POLY_GNOSIS_SAFE (Gnosis Safe, owners returned by getOwners())
+  # If unsure: query funder bytecode on-chain. ~45-byte EIP-1167 = type 1; full Safe = type 2.
+  signature_type: 3
+
+# =============================================================================
+# GABAGOOL STRATEGY CONFIGURATION
+# =============================================================================
+
+gabagool:
+  # Entry thresholds - buy when price below these values
+  yes_buy_threshold: 0.48     # Buy YES if price below (range: 0.40-0.52)
+  no_buy_threshold: 0.48      # Buy NO if price below (range: 0.40-0.52)
+
+  # Profit requirements
+  max_combined_cost: 0.97     # Max total cost for YES + NO (range: 0.95-0.98)
+  min_profit_margin: 0.02     # Minimum profit margin to enter (range: 0.02-0.05)
+
+  # Position limits (adjust based on capital)
+  max_position_per_market: 5.0      # Max USD per market (LOW FOR TESTING)
+  max_total_exposure: 15.0          # Max total USD exposure
+  max_concurrent_arbitrages: 3      # Max simultaneous positions
+  max_unpaired_exposure: 5.0        # Max USD in incomplete pairs
+
+  # Time limits
+  holding_time_limit: 1800          # Max holding time in seconds (30 min)
+  min_time_to_resolution: 120       # Don't enter within 2 min of expiry
+  redeem_check_interval: 300        # Settlement check interval (5 min)
+
+  # Circuit breakers
+  max_consecutive_failures: 3       # Pause after N failed transactions
+  max_daily_drawdown_pct: 0.15      # Stop if down 15% in a day
+  min_wallet_balance: 10.0          # Stop if wallet below this USD
+
+  # Target markets
+  target_assets:
+    - BTC
+    - ETH
+  # Multi-duration windows (matching gabagool22's strategy):
+  #   5-minute:  76% of volume (primary timeframe)
+  #   15-minute: secondary
+  #   1-hour:    24% of volume
+  # Discovery scans ALL durations automatically.
+
+  # -----------------------------------------------------------------------
+  # MOMENTUM MAKER SIGNAL PARAMETERS (new strategy)
+  # -----------------------------------------------------------------------
+
+  # Sigmoid steepness: how strongly momentum shifts implied probability
+  # Higher = more reactive to small moves. Range: 1.0-4.0
+  momentum_sensitivity: 2.5
+
+  # Minimum (implied_prob - market_price) gap to start leaning
+  # 0.20 = only lean when we have a 20-cent edge over the market price
+  entry_edge_threshold: 0.20
+
+  # How many seconds into a window before leaning (wait for initial pricing)
+  min_signal_time_s: 90
+
+  # Stop leaning this many seconds into the window (900s total - 120s buffer)
+  max_signal_time_s: 780
+
+  # How many seconds of BTC price history to use for momentum calculation
+  momentum_lookback_s: 60
+
+  # -----------------------------------------------------------------------
+  # LATENCY SNIPE PARAMETERS
+  # -----------------------------------------------------------------------
+
+  # Minimum % move in 5 seconds to trigger a snipe (0.02 = 0.02%)
+  spike_threshold_pct: 0.02
+
+  # -----------------------------------------------------------------------
+  # LIVE TEST SIZING (conservative — scale up after validating execution)
+  #
+  # Phase 1 — Proof of execution ($100-200 USDC wallet):
+  #   snipe_shares:     5      → ~$3-4 per snipe, validates real FOK fills
+  #   farm_shares:      5      → ~$2-3 per farming order
+  #   farm_max_shares:  50     → ~$25-40 max farming per side per window
+  #   max_total_exposure: 50   → hard cap, bot stops new orders above this
+  #
+  # Phase 2 — Scale up (after 20+ live windows, snipe fill rate confirmed):
+  #   snipe_shares:     20     → ~$12-15 per snipe
+  #   farm_shares:      10
+  #   farm_max_shares:  150
+  #   max_total_exposure: 150
+  #
+  # Phase 3 — Full size (if P&L positive over 50+ windows):
+  #   snipe_shares:     50     → original paper-trade sizing
+  #   farm_shares:      15
+  #   farm_max_shares:  300
+  #   max_total_exposure: 500
+  # -----------------------------------------------------------------------
+
+  # CURRENTLY SET TO: Gabagool22-matched parameters
+  snipe_shares: 10              # gabagool22 uses ~10 shares per order
+  snipe_ask_buffer: 0.02        # $0.02 above ask to guarantee crossing spread
+  snipe_max_price: 0.95         # gabagool22 max observed: $0.96
+  farm_shares: 10               # gabagool22 mean: 8.62, round up to 10
+  farm_max_shares: 100          # ~$50 farming inventory per side
+  snipe_cooldown_s: 45          # Seconds between snipes on same asset
+
+# =============================================================================
+# PATHS
+# =============================================================================
+
+data_dir: "data"
+log_dir: "logs"
+db_path: "data/gabagool.db"
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+log_level: "INFO"             # DEBUG, INFO, WARNING, ERROR
+
+# =============================================================================
+# MODE
+# =============================================================================
+
+# Run in simulation mode (no real trades)
+# Override with: POLY_DRY_RUN=true
+dry_run: false
