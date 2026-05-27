@@ -95,7 +95,7 @@ class SnipeMakerStrategy:
         self.sniper = Sniper(
             bot=bot,
             dry_run=dry_run,
-            snipe_shares=_get_cfg(config, "snipe_shares", 10),
+            snipe_shares=10,   # SAFETY: hardcoded — must change code, not just yaml, to resize snipes
             ask_buffer=_get_cfg(config, "snipe_ask_buffer", 0.02),
             max_price=_get_cfg(config, "snipe_max_price", 0.91),
         )
