@@ -140,6 +140,10 @@ class GabagoolConfig:
     max_combined_cost: float = 0.97
     min_profit_margin: float = 0.02
 
+    # Capital & compounding
+    session_capital_usd: float = 100.0
+    auto_compound_pct: float = 0.0
+
     # Position limits
     max_position_per_market: float = 100.0
     max_total_exposure: float = 500.0
@@ -258,6 +262,8 @@ class Config:
                 no_buy_threshold=g.get("no_buy_threshold", config.gabagool.no_buy_threshold),
                 max_combined_cost=g.get("max_combined_cost", config.gabagool.max_combined_cost),
                 min_profit_margin=g.get("min_profit_margin", config.gabagool.min_profit_margin),
+                session_capital_usd=g.get("session_capital_usd", config.gabagool.session_capital_usd),
+                auto_compound_pct=g.get("auto_compound_pct", config.gabagool.auto_compound_pct),
                 max_position_per_market=g.get("max_position_per_market", config.gabagool.max_position_per_market),
                 max_total_exposure=g.get("max_total_exposure", config.gabagool.max_total_exposure),
                 max_concurrent_arbitrages=g.get("max_concurrent_arbitrages", config.gabagool.max_concurrent_arbitrages),
@@ -271,6 +277,17 @@ class Config:
                 target_assets=g.get("target_assets", config.gabagool.target_assets),
                 market_duration_minutes=g.get("market_duration_minutes", config.gabagool.market_duration_minutes),
             )
+
+            # Sweeper can be nested under gabagool: in production.yaml
+            if "sweeper" in g:
+                s = g["sweeper"]
+                config.sweeper = SweeperConfig(
+                    enabled=s.get("enabled", config.sweeper.enabled),
+                    target_address=s.get("target_address", config.sweeper.target_address),
+                    reserve_bankroll=s.get("reserve_bankroll", config.sweeper.reserve_bankroll),
+                    sweep_threshold=s.get("sweep_threshold", config.sweeper.sweep_threshold),
+                    do_test_transfer=s.get("do_test_transfer", config.sweeper.do_test_transfer),
+                )
 
         # Sweeper config
         if "sweeper" in data:
