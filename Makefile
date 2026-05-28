@@ -64,7 +64,7 @@ setup: $(VENV)/bin/activate
 run: $(VENV)/bin/activate
 	@echo "$(GREEN)Running Gabagool Bot (DRY RUN)...$(NC)"
 	@mkdir -p logs
-	$(VENV_BIN)/python -m src.main --dry-run --log-level INFO 2>&1 | tee "logs/bot-dry-run-$$(date +'%Y-%m-%d-%H-%M').log"
+	$(VENV_BIN)/python -m src.main --dry-run --config config/production.yaml --log-level INFO 2>&1 | tee "logs/bot-dry-run-$$(date +'%Y-%m-%d-%H-%M').log"
 
 run-live: $(VENV)/bin/activate
 	@echo "$(RED)WARNING: Running in LIVE mode - real trades will be executed!$(NC)"
