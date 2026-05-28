@@ -457,17 +457,18 @@ class WindowManager:
 
         async def _fire_one(slot: SnipeSlot) -> SnipeResult:
             try:
-                result = await self.sniper.execute(
-                    direction=direction,
-                    market=slot.market,
-                    active_orders=slot.active_orders,
-                    summary=slot.summary,
-                )
-                slot.last_result = result
-                slot.fired_at = t0
+                async with slot.summary.lock:
+                    result = await self.sniper.execute(
+                        direction=direction,
+                        market=slot.market,
+                        active_orders=slot.active_orders,
+                        summary=slot.summary,
+                    )
+                    slot.last_result = result
+                    slot.fired_at = t0
 
-                if result.success:
-                    slot.summary.snipes_fired += 1
+                    if result.success:
+                        slot.summary.snipes_fired += 1
 
                 return result
             except Exception as e:

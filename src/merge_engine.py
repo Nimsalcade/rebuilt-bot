@@ -53,11 +53,11 @@ from typing import Optional, Any
 import src.terminal_ui as terminal_ui
 
 # Minimum shares to bother merging (below this the gas cost isn't worth it)
-# Increased to 50.0 to batch merges and save on gas fees, replicating Gabagool22's efficiency
-MIN_MERGE_SHARES = 50.0
+# Lowered to 10.0 to capture spread profit more frequently at higher capital levels
+MIN_MERGE_SHARES = 10.0
 
 # How often to attempt merges per window (seconds) — don't spam the chain
-MERGE_COOLDOWN_S = 5.0
+MERGE_COOLDOWN_S = 2.0
 
 # Sniper inventory reserve: always keep at least this many balanced shares on each
 # side AFTER merging so the sniper has opposing inventory to fire against on the

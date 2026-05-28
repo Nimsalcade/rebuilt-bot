@@ -182,6 +182,10 @@ class WindowFillSummary:
     pnl:     Optional[float] = None
     merged_usdc: float       = 0.0
 
+    # Concurrency guard — protects summary fields from logical races between
+    # the GlobalSniperEngine (burst snipes) and MakerLoop (reconcile + merge).
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
     @property
     def up_avg_cost(self) -> float:
         return self.up_total_cost / self.up_gross_shares if self.up_gross_shares else 0.0
@@ -331,8 +335,9 @@ class MakerLoop:
                     await self._cancel_all(active_orders)
                     
                     # Force merge any remaining pairs before expiration to eliminate risk
-                    if summary.up_shares > 0 and summary.down_shares > 0:
-                        await self.merge_engine.try_merge(market, summary, force=True)
+                    async with summary.lock:
+                        if summary.up_shares > 0 and summary.down_shares > 0:
+                            await self.merge_engine.try_merge(market, summary, force=True)
                         
                     state = LoopState.HOLD
 
@@ -544,8 +549,9 @@ class MakerLoop:
                         # This is Gabagool22's core profit mechanic ($275K of $281K revenue).
                         # Runs after every reconcile so we lock in spread profit
                         # without waiting for the binary option to expire.
-                        if summary.up_shares >= MIN_MERGE_SHARES and summary.down_shares >= MIN_MERGE_SHARES:
-                            await self.merge_engine.try_merge(market, summary)
+                        async with summary.lock:
+                            if summary.up_shares >= MIN_MERGE_SHARES and summary.down_shares >= MIN_MERGE_SHARES:
+                                await self.merge_engine.try_merge(market, summary)
 
                     # Log status every 60s
                     if (now - last_status_log_at) >= STATUS_LOG_INTERVAL_S and elapsed_s > 1:
