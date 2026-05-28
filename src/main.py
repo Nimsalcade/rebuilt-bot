@@ -236,7 +236,7 @@ class GabagoolBot:
             gabagool_cfg = self.config.gabagool
             self.strategy = SnipeMakerStrategy(
                 bot=self.bot,
-                config=self.config.to_dict() if hasattr(self.config, 'to_dict') else vars(self.config),
+                config=self.config,   # pass Config object directly — do NOT convert to dict
                 dry_run=self.dry_run,
                 assets=getattr(gabagool_cfg, 'target_assets', ['BTC', 'ETH', 'SOL']),
                 spike_threshold_pct=getattr(gabagool_cfg, 'spike_threshold_pct', 0.02),
