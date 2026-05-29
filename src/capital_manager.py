@@ -60,6 +60,9 @@ _STABLE_READS_REQUIRED = 3
 # Maximum time to wait for settlement before giving up (seconds)
 _SETTLE_TIMEOUT_S = 600.0  # 10 minutes
 
+# Allow up to 15% loss per cycle before stopping
+STOP_LOSS_TOLERANCE_PCT = 0.15
+
 
 class CapitalManager:
     """Enforces fixed-capital-per-cycle and settlement gating."""
@@ -172,7 +175,7 @@ class CapitalManager:
         # 3. Stop-loss check (only after cycle 1)
         if self._cycle_number > 1:
             returned = balance - self._baseline_profit
-            if returned < self.session_capital_usd:
+            if returned < self.session_capital_usd * (1 - STOP_LOSS_TOLERANCE_PCT):
                 loss = self.session_capital_usd - returned
                 self.logger.critical(
                     "=" * 60

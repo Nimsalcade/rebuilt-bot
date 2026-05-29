@@ -59,11 +59,7 @@ MIN_MERGE_SHARES = 10.0
 # How often to attempt merges per window (seconds) — don't spam the chain
 MERGE_COOLDOWN_S = 2.0
 
-# Sniper inventory reserve: always keep at least this many balanced shares on each
-# side AFTER merging so the sniper has opposing inventory to fire against on the
-# next spike.  Without this, an aggressive merge drains one side to 0 and the
-# sniper immediately aborts with "insufficient_opposing_shares".
-SNIPER_INVENTORY_RESERVE = 15.0
+
 
 
 @dataclass
@@ -116,14 +112,7 @@ class MergeEngine:
 
         up_shares = summary.up_shares
         down_shares = summary.down_shares
-        # Keep SNIPER_INVENTORY_RESERVE balanced shares on each side so the
-        # sniper can still fire opposing-side coverage after a merge.  Only
-        # merge the surplus above that reserve; force=True (HOLD phase at
-        # window close) bypasses the reserve since no more snipes will fire.
-        if force:
-            mergeable = min(up_shares, down_shares)
-        else:
-            mergeable = max(0.0, min(up_shares, down_shares) - SNIPER_INVENTORY_RESERVE)
+        mergeable = min(up_shares, down_shares)
 
         if mergeable < MIN_MERGE_SHARES and not force:
             return MergeResult(success=False, merged_shares=0, usdc_returned=0,
@@ -244,20 +233,21 @@ class MergeEngine:
                         
                     error_msg = str(e)
                     import re
-                    match = re.search(r"maximum mergeable amount (\d+)", error_msg)
+                    _MAX_MERGEABLE_RE = re.compile(r'maximum mergeable amount\s+(\d+)', re.IGNORECASE)
+                    match = _MAX_MERGEABLE_RE.search(error_msg)
                     if attempt == 0 and match and "exceeds the maximum" in error_msg:
                         max_amount_micro = int(match.group(1))
-                        max_shares = max_amount_micro / 1_000_000.0
+                        safe_micro = int(max_amount_micro * 0.99) # 1% haircut
+                        safe_shares = safe_micro / 1_000_000.0
                         
                         if current_amount != "max":
-                            adjusted = max(0.0, max_shares - SNIPER_INVENTORY_RESERVE)
-                            if adjusted >= MIN_MERGE_SHARES:
-                                self.logger.warning("Merge amount exceeded actual balance. True balance: %.2f. Retrying with: %.2f", max_shares, adjusted)
-                                current_amount = adjusted
+                            if safe_shares >= MIN_MERGE_SHARES:
+                                self.logger.warning("Merge amount exceeded actual balance. Retrying with clamped amount: %.2f", safe_shares)
+                                current_amount = safe_shares
                                 continue
                             else:
-                                self.logger.warning("Adjusted amount %.2f is below minimum %.2f, aborting merge.", adjusted, MIN_MERGE_SHARES)
-                                return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=f"Adjusted amount {adjusted} below minimum")
+                                self.logger.warning("Clamped amount %.2f is below minimum %.2f, aborting merge.", safe_shares, MIN_MERGE_SHARES)
+                                return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=f"Clamped amount {safe_shares} below minimum")
                                 
                     self.logger.error("Unified SDK merge exception: %s", e)
                     return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=str(e))

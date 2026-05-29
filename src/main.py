@@ -67,8 +67,8 @@ from src.risk_manager import RiskManager, RiskConfig
 from src.stats_tracker import StatsTracker
 from src.db import TradingDatabase
 
-# Precision snipe-maker strategy (replaces momentum_maker)
-from strategies.snipe_maker import SnipeMakerStrategy
+# Pure spread arbitrage strategy (replaces snipe_maker)
+from strategies.spread_farmer import SpreadFarmerStrategy
 
 
 # Constants
@@ -162,14 +162,14 @@ def setup_signal_handlers() -> None:
 
 class GabagoolBot:
     """
-    Main orchestrator for the Gabagool precision snipe-maker bot.
+    Main orchestrator for the Gabagool pure spread bot.
 
     Wires together all components:
     - TradingBot: Order execution via Polymarket CLOB
     - RiskManager: Pre-trade validation
     - StatsTracker: Performance metrics
     - TradingDatabase: SQLite persistence
-    - SnipeMakerStrategy: Latency arb (farming + snipe state machine)
+    - SpreadFarmerStrategy: Pure spread arbitrage logic
     """
 
     def __init__(self, config: Config, dry_run: bool = False):
@@ -193,7 +193,7 @@ class GabagoolBot:
         self.risk_manager: Optional[RiskManager] = None
         self.stats_tracker: Optional[StatsTracker] = None
         self.db: Optional[TradingDatabase] = None
-        self.strategy: Optional[SnipeMakerStrategy] = None
+        self.strategy: Optional[SpreadFarmerStrategy] = None
 
     def initialize_components(self) -> bool:
         """
@@ -232,16 +232,13 @@ class GabagoolBot:
             self.stats_tracker = StatsTracker(str(stats_path))
             self.logger.info("  [OK] StatsTracker")
 
-            # 5. Snipe Maker Strategy
-            gabagool_cfg = self.config.gabagool
-            self.strategy = SnipeMakerStrategy(
+            # 5. Spread Farmer Strategy
+            self.strategy = SpreadFarmerStrategy(
                 bot=self.bot,
-                config=self.config,   # pass Config object directly — do NOT convert to dict
+                config=self.config,
                 dry_run=self.dry_run,
-                assets=getattr(gabagool_cfg, 'target_assets', ['BTC', 'ETH', 'SOL']),
-                spike_threshold_pct=getattr(gabagool_cfg, 'spike_threshold_pct', 0.02),
             )
-            self.logger.info("  [OK] SnipeMakerStrategy")
+            self.logger.info("  [OK] SpreadFarmerStrategy")
 
             self.logger.info("All components initialized successfully")
             return True
@@ -278,7 +275,7 @@ class GabagoolBot:
         its own window discovery, spike detection, and snipe execution.
         """
         self.logger.info("-" * 60)
-        self.logger.info("Starting Precision Snipe-Maker (Latency Arbitrage Mode)")
+        self.logger.info("Starting Pure Spread Arbitrage")
         self.logger.info("-" * 60)
 
         await self.strategy.run()

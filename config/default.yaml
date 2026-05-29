@@ -73,63 +73,7 @@ gabagool:
   #   1-hour:    24% of volume
   # Discovery scans ALL durations automatically.
 
-  # -----------------------------------------------------------------------
-  # MOMENTUM MAKER SIGNAL PARAMETERS (new strategy)
-  # -----------------------------------------------------------------------
 
-  # Sigmoid steepness: how strongly momentum shifts implied probability
-  # Higher = more reactive to small moves. Range: 1.0-4.0
-  momentum_sensitivity: 2.5
-
-  # Minimum (implied_prob - market_price) gap to start leaning
-  # 0.20 = only lean when we have a 20-cent edge over the market price
-  entry_edge_threshold: 0.20
-
-  # How many seconds into a window before leaning (wait for initial pricing)
-  min_signal_time_s: 90
-
-  # Stop leaning this many seconds into the window (900s total - 120s buffer)
-  max_signal_time_s: 780
-
-  # How many seconds of BTC price history to use for momentum calculation
-  momentum_lookback_s: 60
-
-  # -----------------------------------------------------------------------
-  # LATENCY SNIPE PARAMETERS
-  # -----------------------------------------------------------------------
-
-  # Minimum % move in 5 seconds to trigger a snipe (0.02 = 0.02%)
-  spike_threshold_pct: 0.02
-
-  # -----------------------------------------------------------------------
-  # LIVE TEST SIZING (conservative — scale up after validating execution)
-  #
-  # Phase 1 — Proof of execution ($100-200 USDC wallet):
-  #   snipe_shares:     5      → ~$3-4 per snipe, validates real FOK fills
-  #   farm_shares:      5      → ~$2-3 per farming order
-  #   farm_max_shares:  50     → ~$25-40 max farming per side per window
-  #   max_total_exposure: 50   → hard cap, bot stops new orders above this
-  #
-  # Phase 2 — Scale up (after 20+ live windows, snipe fill rate confirmed):
-  #   snipe_shares:     20     → ~$12-15 per snipe
-  #   farm_shares:      10
-  #   farm_max_shares:  150
-  #   max_total_exposure: 150
-  #
-  # Phase 3 — Full size (if P&L positive over 50+ windows):
-  #   snipe_shares:     50     → original paper-trade sizing
-  #   farm_shares:      15
-  #   farm_max_shares:  300
-  #   max_total_exposure: 500
-  # -----------------------------------------------------------------------
-
-  # CURRENTLY SET TO: Gabagool22-matched parameters
-  snipe_shares: 10              # gabagool22 uses ~10 shares per order
-  snipe_ask_buffer: 0.02        # $0.02 above ask to guarantee crossing spread
-  snipe_max_price: 0.95         # gabagool22 max observed: $0.96
-  farm_shares: 10               # gabagool22 mean: 8.62, round up to 10
-  farm_max_shares: 100          # ~$50 farming inventory per side
-  snipe_cooldown_s: 45          # Seconds between snipes on same asset
 
 # =============================================================================
 # PATHS

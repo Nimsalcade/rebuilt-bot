@@ -1,12 +1,6 @@
 # Gabagool Bot - Production Configuration
-# Version: 1.0
-# Created: 2026-01-26
-#
-# Production overrides for default.yaml
-# These values are used when running in production mode.
-#
-# Usage:
-#   python -m src.main --config config/production.yaml
+# Version: 2.0 (Pure Spread Arbitrage)
+# Created: 2026-05-29
 
 # =============================================================================
 # WALLET CONFIGURATION
@@ -16,79 +10,31 @@
 #   POLY_SAFE_ADDRESS - Your Polymarket Safe/Proxy wallet address
 #   POLY_PRIVATE_KEY - Your EOA private key (never commit!)
 
-# Use a private RPC for production (Alchemy, Infura, etc.)
-# rpc_url: "https://polygon-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
-
 # =============================================================================
-# GABAGOOL STRATEGY - PRODUCTION
+# GABAGOOL STRATEGY - PRODUCTION (PURE SPREAD)
 # =============================================================================
 
 gabagool:
-  # Slightly more conservative thresholds for production
-  yes_buy_threshold: 0.47
-  no_buy_threshold: 0.47
-  max_combined_cost: 0.96
-  min_profit_margin: 0.03
-  spike_threshold_pct: 0.01
+  # CHANGE: was 1.0 — causes stop-loss on every losing cycle
+  auto_compound_pct: 0.0
 
-  # -------------------------------------------------------------------------
-  # PROFIT LOCK — Capital per cycle
-  # -------------------------------------------------------------------------
-  # Base session capital limit.
-  session_capital_usd: 0.0
+  # KEEP: fixed session capital
+  session_capital_usd: 200.0
 
-  # -------------------------------------------------------------------------
-  # AUTO-COMPOUNDING (GABAGOOL SCALING)
-  # -------------------------------------------------------------------------
-  # Set to a value between 0.0 and 1.0 to automatically reinvest profits.
-  # 0.0 = "Training Wheels" (Strictly uses session_capital_usd limit above)
-  # 1.0 = "Gabagool Mode" (Deploys 100% of the wallet balance every cycle)
-  auto_compound_pct: 1.0
+  # CHANGE: was 0.96 — lower to match gabagool22's observed combined avg of 0.965
+  max_combined_cost: 0.97
 
-  # -------------------------------------------------------------------------
-  # AUTOMATED PROFIT SWEEPER
-  # -------------------------------------------------------------------------
-  sweeper:
-    enabled: true
-    target_address: "0x96a7d85634e8692FD4aaE2cB88CCd8b0d3295b85"
-    reserve_bankroll: 200.0
-    sweep_threshold: 1000.0
-    do_test_transfer: true
-
-  # -------------------------------------------------------------------------
-  # COMBINED COST GATE
-  # -------------------------------------------------------------------------
-  # If the running average of (UP_avg + DOWN_avg) fills exceeds this
-  # threshold, no more orders are posted for that window.
-  # Forensic data: 47.7% of windows exceeded $1.00 due to order slippage.
-  # At $0.95 we preserve a minimum 5% gross margin per window.
-  max_combined_cost_gate: 0.95
-
-  # -------------------------------------------------------------------------
-  # BASE EXPOSURE LIMITS (Dynamically scaled by Auto-Compounder)
-  # -------------------------------------------------------------------------
-  max_position_per_market: 1000.0
-  max_total_exposure: 1000.0
-  max_concurrent_arbitrages: 6
-  max_unpaired_exposure: 10.0
-  snipe_shares: 10          # 10 × $0.85 = $8.50 max per snipe (matches g22 $9 cap)
-  snipe_cooldown_s: 45       # seconds between snipes on the same asset
-
-  # Time limits
-  holding_time_limit: 1800
-  min_time_to_resolution: 60          # gabagool22 enters 1-2 min before close
-  redeem_check_interval: 300
-
-  # Circuit breakers
-  max_consecutive_failures: 3
-  max_daily_drawdown_pct: 0.15
-  min_wallet_balance: 10.0
-
-  # Target markets
+  # KEEP:
   target_assets:
     - BTC
     - ETH
-  # Multi-duration: discovery scans 5m, 15m, 1h automatically
+  max_concurrent_arbitrages: 4    # 4 windows at a time (matching gabagool22)
+  max_position_per_market: 250.0  # $250 per window ($200 / 4 windows + buffer)
+  max_total_exposure: 1000.0
+  holding_time_limit: 1800
+  min_time_to_resolution: 60
+  max_daily_drawdown_pct: 0.15
+  min_wallet_balance: 10.0
 
 # =============================================================================
 # PATHS - PRODUCTION
