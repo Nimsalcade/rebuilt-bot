@@ -1,0 +1,242 @@
+
+<h2 class="sr-only">Bot performance post-mortem analysis comparing your bot against gabagool22</h2>
+
+<style>
+.pm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:1.5rem}
+.pm-card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:.85rem 1rem}
+.pm-label{font-size:12px;color:var(--color-text-secondary);margin-bottom:4px}
+.pm-val{font-size:22px;font-weight:500}
+.pm-val.red{color:#c0392b}
+.pm-val.green{color:#1d9e75}
+.pm-val.amber{color:#ba7517}
+.section-title{font-size:13px;font-weight:500;color:var(--color-text-secondary);text-transform:none;letter-spacing:.03em;margin:1.5rem 0 .6rem}
+.compare-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.compare-card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:.85rem 1rem}
+.compare-card.gaba{border-left:3px solid #1d9e75}
+.compare-card.bot{border-left:3px solid #e24b4a}
+.compare-label{font-size:11px;color:var(--color-text-secondary);margin-bottom:3px}
+.compare-val{font-size:15px;font-weight:500}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;margin-top:4px}
+.tag.green{background:#eaf3de;color:#3b6d11}
+.tag.red{background:#fcebeb;color:#a32d2d}
+.tag.amber{background:#faeeda;color:#854f0b}
+.err-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.err-bar-wrap{flex:1;height:8px;background:var(--color-background-tertiary);border-radius:4px;overflow:hidden}
+.err-bar{height:100%;border-radius:4px}
+.err-label{font-size:12px;color:var(--color-text-secondary);min-width:200px}
+.err-count{font-size:12px;font-weight:500;min-width:50px;text-align:right}
+</style>
+
+<p class="section-title">wallet performance — may 29, 2026</p>
+<div class="pm-grid">
+  <div class="pm-card"><div class="pm-label">starting balance</div><div class="pm-val">$205.48</div></div>
+  <div class="pm-card"><div class="pm-label">peak balance</div><div class="pm-val amber">$380.47</div></div>
+  <div class="pm-card"><div class="pm-label">ending balance</div><div class="pm-val red">$19.62</div></div>
+  <div class="pm-card"><div class="pm-label">total loss</div><div class="pm-val red">−$185.86</div></div>
+  <div class="pm-card"><div class="pm-label">max drawdown</div><div class="pm-val red">−90.5%</div></div>
+  <div class="pm-card"><div class="pm-label">lowest point</div><div class="pm-val red">$1.56</div></div>
+</div>
+
+<p class="section-title">balance timeline</p>
+<div style="position:relative;width:100%;height:200px;margin-bottom:1.5rem">
+  <canvas id="balChart" role="img" aria-label="Balance timeline showing wallet crashing from $205 to $1.56, recovering to $380, then declining to $19.62 by end of day"></canvas>
+</div>
+
+<p class="section-title">strategy comparison: what gabagool actually does vs what your bot does</p>
+<div class="compare-row">
+  <div class="compare-card gaba">
+    <div class="compare-label">gabagool22 strategy</div>
+    <div class="compare-val">spread arbitrage</div>
+    <div class="tag green">direction-neutral</div>
+    <div style="font-size:12px;color:var(--color-text-secondary);margin-top:8px">buys both Up + Down when combined price &lt; $1.00, then merges them for guaranteed profit. never cares which way the market goes.</div>
+  </div>
+  <div class="compare-card bot">
+    <div class="compare-label">your bot strategy</div>
+    <div class="compare-val">directional prediction</div>
+    <div class="tag red">wrong model entirely</div>
+    <div style="font-size:12px;color:var(--color-text-secondary);margin-top:8px">builds a "lean" on one side based on a signal, bets on UP or DOWN. loses big when the signal is wrong. this is gambling, not arb.</div>
+  </div>
+</div>
+<div class="compare-row">
+  <div class="compare-card gaba">
+    <div class="compare-label">avg combined price (Up+Down)</div>
+    <div class="compare-val green">0.9651</div>
+    <div class="tag green">always profitable per pair</div>
+  </div>
+  <div class="compare-card bot">
+    <div class="compare-label">avg combined price (Up+Down)</div>
+    <div class="compare-val red">0.9930 ± 0.313</div>
+    <div class="tag red">48% of markets guaranteed loss</div>
+  </div>
+</div>
+<div class="compare-row">
+  <div class="compare-card gaba">
+    <div class="compare-label">merge success</div>
+    <div class="compare-val green">fully functional</div>
+    <div class="tag green">profit mechanism works</div>
+  </div>
+  <div class="compare-card bot">
+    <div class="compare-label">merge success</div>
+    <div class="compare-val red">68% sessions = $0</div>
+    <div class="tag red">401 Unauthorized on RPC</div>
+  </div>
+</div>
+<div class="compare-row">
+  <div class="compare-card gaba">
+    <div class="compare-label">signal accuracy needed</div>
+    <div class="compare-val green">none — market-neutral</div>
+    <div class="tag green">profits from spread only</div>
+  </div>
+  <div class="compare-card bot">
+    <div class="compare-label">signal accuracy achieved</div>
+    <div class="compare-val red">50.9% (coin flip)</div>
+    <div class="tag red">random after costs</div>
+  </div>
+</div>
+
+<p class="section-title">error breakdown (57,266 total log lines)</p>
+<div style="margin-bottom:1.5rem">
+  <div class="err-row">
+    <div class="err-label">425 "service not ready"</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:82%;background:#e24b4a"></div></div>
+    <div class="err-count" style="color:#e24b4a">16,499</div>
+  </div>
+  <div class="err-row">
+    <div class="err-label">request exception (connection)</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:20%;background:#e24b4a"></div></div>
+    <div class="err-count" style="color:#e24b4a">1,701</div>
+  </div>
+  <div class="err-row">
+    <div class="err-label">503 post-only mode</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:12%;background:#e24b4a"></div></div>
+    <div class="err-count" style="color:#e24b4a">956</div>
+  </div>
+  <div class="err-row">
+    <div class="err-label">merge: too many positions (11–14)</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:5%;background:#ba7517"></div></div>
+    <div class="err-count" style="color:#ba7517">286</div>
+  </div>
+  <div class="err-row">
+    <div class="err-label">merge: 401 unauthorized (RPC)</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:2%;background:#ba7517"></div></div>
+    <div class="err-count" style="color:#ba7517">38</div>
+  </div>
+  <div class="err-row">
+    <div class="err-label">config: missing rpc_url attr</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:1%;background:#ba7517"></div></div>
+    <div class="err-count" style="color:#ba7517">12</div>
+  </div>
+  <div class="err-row">
+    <div class="err-label">thread safety (deque/dict mutation)</div>
+    <div class="err-bar-wrap"><div class="err-bar" style="width:1%;background:#888780"></div></div>
+    <div class="err-count" style="color:#888780">32</div>
+  </div>
+  <div style="font-size:12px;color:var(--color-text-secondary);margin-top:6px">94.1% of all order attempts failed — only 1,075 fills succeeded out of ~19,000 attempts</div>
+</div>
+
+<p class="section-title">net pnl distribution per resolved market</p>
+<div style="position:relative;width:100%;height:180px;margin-bottom:1rem">
+  <canvas id="pnlChart" role="img" aria-label="Bar chart showing 28 profitable markets and 29 losing markets. Worst loss was -$109, best win was +$205.65"></canvas>
+</div>
+<div style="display:flex;gap:16px;font-size:12px;color:var(--color-text-secondary);margin-bottom:1.5rem">
+  <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#1d9e75"></span>wins: 28 markets, +$1,711 total</span>
+  <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#e24b4a"></span>losses: 29 markets, −$1,050 total</span>
+  <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#888780"></span>zero: 15 markets</span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+const textCol = isDark ? '#b4b2a9' : '#5f5e5a';
+const gridCol = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+
+const balData = [
+  {t:'00:15',v:200},{t:'01:45',v:205},{t:'03:29',v:216},{t:'09:26',v:186},
+  {t:'09:48',v:163},{t:'09:51',v:121},{t:'09:58',v:108},{t:'10:03',v:201},
+  {t:'10:13',v:195},{t:'10:17',v:180},{t:'10:24',v:161},{t:'10:32',v:144},
+  {t:'10:38',v:85},{t:'10:41',v:81},{t:'10:46',v:287},{t:'10:50',v:253},
+  {t:'11:01',v:262},{t:'11:06',v:161},{t:'11:12',v:111},{t:'11:22',v:155},
+  {t:'11:27',v:62},{t:'11:32',v:328},{t:'11:38',v:235},{t:'11:46',v:295},
+  {t:'11:51',v:239},{t:'12:01',v:380},{t:'12:08',v:369},{t:'12:35',v:346},
+  {t:'13:33',v:228},{t:'13:38',v:2},{t:'13:43',v:77},{t:'13:46',v:300},
+  {t:'13:51',v:218},{t:'14:01',v:176},{t:'14:08',v:167},{t:'14:33',v:95},
+  {t:'14:50',v:175},{t:'15:03',v:158},{t:'15:08',v:140},{t:'15:15',v:175},
+  {t:'15:35',v:225},{t:'15:45',v:246},{t:'16:01',v:267},{t:'16:36',v:208},
+  {t:'16:47',v:139},{t:'17:10',v:110},{t:'17:15',v:173},{t:'17:16',v:295},
+  {t:'17:21',v:219},{t:'18:14',v:265},{t:'18:17',v:235},{t:'18:34',v:66},
+  {t:'18:40',v:2},{t:'18:48',v:92},{t:'19:13',v:4},{t:'19:15',v:82},
+  {t:'19:20',v:19},{t:'19:27',v:4},{t:'19:49',v:20}
+];
+
+new Chart(document.getElementById('balChart'), {
+  type:'line',
+  data:{
+    labels: balData.map(d=>d.t),
+    datasets:[{
+      label:'Wallet balance',
+      data: balData.map(d=>d.v),
+      borderColor:'#e24b4a',
+      borderWidth:1.5,
+      pointRadius:0,
+      fill:true,
+      backgroundColor: isDark ? 'rgba(226,75,74,0.08)' : 'rgba(226,75,74,0.06)',
+      tension:0.2
+    },{
+      label:'Start ($205)',
+      data: balData.map(()=>205.48),
+      borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)',
+      borderWidth:1,
+      borderDash:[4,4],
+      pointRadius:0,
+      fill:false
+    }]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{
+      callbacks:{label:ctx=>'$'+ctx.parsed.y.toFixed(2)}
+    }},
+    scales:{
+      x:{ticks:{color:textCol,font:{size:10},maxTicksLimit:10,maxRotation:0},grid:{color:gridCol}},
+      y:{ticks:{color:textCol,font:{size:10},callback:v=>'$'+v},grid:{color:gridCol},min:0}
+    }
+  }
+});
+
+const pnlBuckets = [
+  {label:'−$109',v:-109},{label:'−$101',v:-100},{label:'−$99',v:-99},{label:'−$91',v:-91},
+  {label:'−$69',v:-69},{label:'−$60',v:-60},{label:'−$54',v:-54},{label:'−$46',v:-46},
+  {label:'−$43',v:-42},{label:'−$39',v:-39},{label:'−$37',v:-37},{label:'−$36',v:-36},
+  {label:'−$28',v:-28},{label:'−$27',v:-27},{label:'−$25',v:-24},{label:'−$22',v:-22},
+  {label:'−$18',v:-18},{label:'−$17',v:-17},{label:'−$16',v:-16},{label:'−$14',v:-14},
+  {label:'−$10',v:-10},{label:'−$8.9',v:-9},{label:'−$6.3',v:-6},{label:'−$1',v:-1},
+  {label:'+$14',v:14},{label:'+$20',v:20},{label:'+$26',v:26},{label:'+$29',v:29},
+  {label:'+$34',v:35},{label:'+$44',v:44},{label:'+$49',v:49},{label:'+$49',v:49},
+  {label:'+$54',v:54},{label:'+$62',v:62},{label:'+$64',v:64},{label:'+$69',v:69},
+  {label:'+$71',v:71},{label:'+$73',v:73},{label:'+$83',v:83},{label:'+$92',v:92},
+  {label:'+$103',v:103},{label:'+$109',v:109},{label:'+$141',v:141},
+  {label:'+$206',v:206}
+];
+
+new Chart(document.getElementById('pnlChart'), {
+  type:'bar',
+  data:{
+    labels: pnlBuckets.map(d=>d.label),
+    datasets:[{
+      data: pnlBuckets.map(d=>d.v),
+      backgroundColor: pnlBuckets.map(d=>d.v>=0?'#1d9e75':'#e24b4a'),
+      borderRadius:2,borderWidth:0
+    }]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{
+      callbacks:{label:ctx=>'$'+ctx.parsed.y.toFixed(2)}
+    }},
+    scales:{
+      x:{ticks:{color:textCol,font:{size:9},maxRotation:45,autoSkip:true,maxTicksLimit:20},grid:{display:false}},
+      y:{ticks:{color:textCol,font:{size:10},callback:v=>(v>=0?'+':'')+v},grid:{color:gridCol}}
+    }
+  }
+});
+</script>

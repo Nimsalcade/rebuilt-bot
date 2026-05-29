@@ -89,6 +89,11 @@ class BotConfig:
     signature_type: int = 3  # POLY_GNOSIS_SAFE (V2 SignatureType enum: 0=EOA,1=PROXY,2=SAFE,3=1271)
     dry_run: bool = False
     creds_path: str = "data/api_creds.json"
+    relayer_api_key: str = ""
+    relayer_api_key_address: str = ""
+    builder_api_key: str = ""
+    builder_api_secret: str = ""
+    builder_api_passphrase: str = ""
 
 
 class TradingBot:
@@ -109,6 +114,19 @@ class TradingBot:
         )
 
         self.gamma = GammaClient(host=config.gamma_api_url)
+        
+        self.relayer = None
+        if config.relayer_api_key and config.relayer_api_key_address:
+            try:
+                from py_builder_relayer_client.client import RelayClient
+                self.relayer = RelayClient(
+                    relayer_url="https://relayer-v2.polymarket.com",
+                    chain_id=config.chain_id,
+                    private_key=config.private_key,
+                )
+                self.logger.info("Gasless Relayer Client initialized.")
+            except ImportError:
+                self.logger.warning("py-builder-relayer-client not installed. Gasless relayer unavailable.")
 
         self._connected = False
         # Cached NET available collateral balance (micro-USDC).
@@ -651,5 +669,10 @@ def create_bot_from_config(config: "Config") -> TradingBot:
         signature_type=config.clob.signature_type,
         dry_run=config.dry_run,
         creds_path=str(Path(config.data_dir) / "api_creds.json"),
+        relayer_api_key=config.relayer_api_key,
+        relayer_api_key_address=config.relayer_api_key_address,
+        builder_api_key=getattr(config, 'builder_api_key', ''),
+        builder_api_secret=getattr(config, 'builder_api_secret', ''),
+        builder_api_passphrase=getattr(config, 'builder_api_passphrase', ''),
     )
     return TradingBot(bot_config)

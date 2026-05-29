@@ -633,12 +633,18 @@ class WindowManager:
         else:
             posting_buffer = 180    # 3 min buffer for 1-hour windows
 
+        # Distribute deployable capital evenly across active markets
+        target_assets = getattr(gabagool_cfg, 'target_assets', ['BTC', 'ETH'])
+        active_assets = len(target_assets)
+        window_cap = self._capital_mgr.session_capital_usd / max(1, active_assets)
+
         maker = MakerLoop(
             bot=self.bot,
             dry_run=self.dry_run,
             farm_shares=getattr(gabagool_cfg, 'farm_shares', 10),
             farm_max_shares=getattr(gabagool_cfg, 'farm_max_shares', 100),
             stop_posting_buffer_s=posting_buffer,
+            window_capital_cap=window_cap,
         )
 
         task = asyncio.create_task(

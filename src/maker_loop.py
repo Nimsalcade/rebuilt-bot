@@ -60,52 +60,26 @@ MIN_BID_PRICE      = 0.10      # Floor bids now dollar-targeted: 10sh×0.10=$1.0
 MAX_BID_PRICE      = 0.95      # Never bid above 95¢
 
 # --- Gabagool22-style price ladder ---
-# Posts orders at EVERY level simultaneously — floor bids (lottery),
-# mid-range (delta neutral core), and high bids (snipe layer).
+# LIVE SAFETY: Capped at $0.45 max.  In live markets, orders above ~$0.50
+# get INSTANTLY filled by takers (they're above fair value in a 50/50 binary
+# market).  Keeping both sides ≤ $0.45 ensures combined cost ≤ $0.90,
+# giving us ≥ $0.10 spread profit per merge pair.
+# The sniper handles the high-price fills on spikes with its own cost gate.
 LADDER_STEPS = [
     0.10, 0.15, 0.20,           # Floor bids — cheap lottery (huge ROI when hits)
     0.25, 0.30, 0.35, 0.40,     # Low delta zone
-    0.45, 0.50, 0.55,           # Core delta-neutral zone (fills most often)
-    0.60, 0.65, 0.70,           # Upper mid zone
-    0.75, 0.80, 0.85,           # High conviction / snipe layer
+    0.45,                        # Cap — anything above this gets instantly taken
 ]
 
-# --- Dollar-targeted sizing per rung (matches g22's exact order sizing) ---
-# g22 data analysis: he targets ~$1 at floor, scaling up to ~$8 at top.
-# We compute shares = ceil(target_dollars / price), min enough to meet $1 Poly min.
-#
-# Zone         | Target $ | Example: 5 shares flat (OLD) vs dollar-target (NEW)
-# Floor 0-20¢  |   $1.00  | 5×0.10=$0.50 REJECTED → 10×0.10=$1.00 ACCEPTED ✓
-# Low   20-40¢ |   $2.00  | 5×0.30=$1.50 ok       →  7×0.30=$2.10 (matches g22)
-# Mid   40-60¢ |   $4.00  | 5×0.50=$2.50 low      →  8×0.50=$4.00 (matches g22)
-# High  60-80¢ |   $5.00  | 5×0.70=$3.50 low      →  7×0.70=$4.90 (matches g22)
-# Top   80-100¢|   $8.00  | 5×0.85=$4.25 low      →  9×0.85=$7.65 (matches g22)
+# --- Dollar-targeted sizing per rung ---
+# Targets ~$1 at floor, scaling up to ~$4 at mid.
 RUNG_DOLLAR_TARGETS = [
     (0.00, 0.20, 1.00),   # floor lottery — $1 each
     (0.20, 0.40, 2.00),   # low zone      — $2 each
-    (0.40, 0.60, 4.00),   # mid zone      — $4 each
-    (0.60, 0.80, 5.00),   # high zone     — $5 each
-    (0.80, 1.01, 8.00),   # top zone      — $8 each (g22's conviction layer)
+    (0.40, 0.50, 4.00),   # mid zone      — $4 each
 ]
 
-
-def _dollar_target_shares(price: float) -> int:
-    """Compute shares for one ladder rung using g22's dollar-targeting approach.
-
-    Returns enough shares to hit the zone's dollar target, always meeting
-    Polymarket's $1 minimum order size requirement.
-    """
-    target = 1.00  # fallback
-    for lo, hi, t in RUNG_DOLLAR_TARGETS:
-        if lo <= price < hi:
-            target = t
-            break
-    # shares = target_dollars / price, rounded up to nearest int
-    shares = math.ceil(target / price)
-    # Ensure we never place a sub-$1 order (Polymarket API requirement)
-    while shares * price < 1.00:
-        shares += 1
-    return shares
+# (Function moved to MakerLoop class)
 
 # --- Spike polling ---
 SPIKE_POLL_INTERVAL_S = 0.25   # Check for spikes 4x per second
@@ -228,12 +202,14 @@ class MakerLoop:
         farm_shares: int = FARM_ORDER_SHARES,
         farm_max_shares: int = FARM_MAX_SHARES,
         stop_posting_buffer_s: int = STOP_POSTING_BUFFER_S,
+        window_capital_cap: float = 250.0,
     ):
         self.bot                   = bot
         self.dry_run               = dry_run
         self.farm_shares           = farm_shares
         self.farm_max_shares       = farm_max_shares
         self.stop_posting_buffer_s = stop_posting_buffer_s
+        self.window_capital_cap    = window_capital_cap
         self.logger                = logging.getLogger("maker_loop")
         self._cost_gate_logged_for_window: set = set()
 
@@ -241,6 +217,24 @@ class MakerLoop:
         # After every fill reconciliation, opposing UP+DOWN pairs are merged
         # back to USDC immediately — this is how Gabagool22 earned $275K.
         self.merge_engine = MergeEngine(bot=bot, dry_run=dry_run)
+
+    def _dollar_target_shares(self, price: float) -> int:
+        """Compute shares dynamically scaled by the available session capital."""
+        # The base ladder structure costs ~$30 total ($15 per side). 
+        # Scale proportionately to deploy the full window capital cap.
+        scale_factor = max(1.0, self.window_capital_cap / 30.0)
+        
+        target = 1.00 * scale_factor
+        for lo, hi, t in RUNG_DOLLAR_TARGETS:
+            if lo <= price < hi:
+                target = t * scale_factor
+                break
+                
+        target = max(1.0, target)  # Polymarket $1 minimum
+        shares = math.ceil(target / price)
+        while shares * price < 1.00:
+            shares += 1
+        return shares
 
     async def run(
         self,
@@ -678,16 +672,16 @@ class MakerLoop:
                     self._cost_gate_logged_for_window.add(summary.market_id)
                 return  # stop posting — protect from further losses
 
-        # ── Hard capital cap: $1,000 global / 4 windows = $250 per window ──
+        # ── Hard capital cap: Dynamic per-window cap ──
         # Snapshot resting orders to avoid mutation during concurrent ladder posting
         locked_resting = sum(
             o.price * o.shares for o in list(active_orders.values())
         )
         total_committed = summary.total_invested + locked_resting
-        if total_committed >= MAX_PER_WINDOW_CAPITAL:
+        if total_committed >= self.window_capital_cap:
             self.logger.debug(
                 "Capital cap reached | window=%s | committed=$%.2f / $%.2f",
-                summary.market_id[:12], total_committed, MAX_PER_WINDOW_CAPITAL
+                summary.market_id[:12], total_committed, self.window_capital_cap
             )
             return  # at ceiling — don't post any new orders
 
@@ -744,8 +738,8 @@ class MakerLoop:
             if o.side == side and abs(o.price - price) < 0.03:
                 return False  # already covered this rung
 
-        # Dollar-targeted share sizing (matches g22's order sizes)
-        shares = _dollar_target_shares(price)
+        # Dollar-targeted share sizing scaled dynamically
+        shares = self._dollar_target_shares(price)
 
         if self.dry_run:
             fake_id = f"dry_{side}_{int(price*100)}_{int(time.time()*1000)%10000}"

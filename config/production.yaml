@@ -29,12 +29,13 @@ gabagool:
   no_buy_threshold: 0.47
   max_combined_cost: 0.96
   min_profit_margin: 0.03
+  spike_threshold_pct: 0.01
 
   # -------------------------------------------------------------------------
   # PROFIT LOCK — Capital per cycle
   # -------------------------------------------------------------------------
   # Base session capital limit.
-  session_capital_usd: 200.0
+  session_capital_usd: 0.0
 
   # -------------------------------------------------------------------------
   # AUTO-COMPOUNDING (GABAGOOL SCALING)

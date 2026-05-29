@@ -139,6 +139,7 @@ class GabagoolConfig:
     no_buy_threshold: float = 0.48
     max_combined_cost: float = 0.97
     min_profit_margin: float = 0.02
+    spike_threshold_pct: float = 0.02
 
     # Capital & compounding
     session_capital_usd: float = 100.0
@@ -184,6 +185,11 @@ class Config:
     # Core settings
     safe_address: str = ""
     rpc_url: str = "https://polygon-rpc.com"
+    relayer_api_key: str = ""
+    relayer_api_key_address: str = ""
+    builder_api_key: str = ""
+    builder_api_secret: str = ""
+    builder_api_passphrase: str = ""
 
     # API configuration
     clob: ClobConfig = field(default_factory=ClobConfig)
@@ -244,6 +250,10 @@ class Config:
             config.safe_address = data["safe_address"]
         if "rpc_url" in data:
             config.rpc_url = data["rpc_url"]
+        if "relayer_api_key" in data:
+            config.relayer_api_key = data["relayer_api_key"]
+        if "relayer_api_key_address" in data:
+            config.relayer_api_key_address = data["relayer_api_key_address"]
 
         # CLOB config
         if "clob" in data:
@@ -262,6 +272,7 @@ class Config:
                 no_buy_threshold=g.get("no_buy_threshold", config.gabagool.no_buy_threshold),
                 max_combined_cost=g.get("max_combined_cost", config.gabagool.max_combined_cost),
                 min_profit_margin=g.get("min_profit_margin", config.gabagool.min_profit_margin),
+                spike_threshold_pct=g.get("spike_threshold_pct", config.gabagool.spike_threshold_pct),
                 session_capital_usd=g.get("session_capital_usd", config.gabagool.session_capital_usd),
                 auto_compound_pct=g.get("auto_compound_pct", config.gabagool.auto_compound_pct),
                 max_position_per_market=g.get("max_position_per_market", config.gabagool.max_position_per_market),
@@ -347,6 +358,14 @@ class Config:
         if rpc_url:
             config.rpc_url = rpc_url
 
+        relayer_key = get_env("RELAYER_API_KEY")
+        if relayer_key:
+            config.relayer_api_key = relayer_key
+            
+        relayer_addr = get_env("RELAYER_API_KEY_ADDRESS")
+        if relayer_addr:
+            config.relayer_api_key_address = relayer_addr
+
         # CLOB config
         clob_host = get_env("CLOB_HOST")
         chain_id = get_env_int("CHAIN_ID", 137)
@@ -406,6 +425,26 @@ class Config:
         rpc_url = get_env("RPC_URL")
         if rpc_url:
             config.rpc_url = rpc_url
+            
+        relayer_key = get_env("RELAYER_API_KEY")
+        if relayer_key:
+            config.relayer_api_key = relayer_key
+            
+        relayer_addr = get_env("RELAYER_API_KEY_ADDRESS")
+        if relayer_addr:
+            config.relayer_api_key_address = relayer_addr
+
+        builder_key = get_env("BUILDER_API_KEY")
+        if builder_key:
+            config.builder_api_key = builder_key
+
+        builder_secret = get_env("BUILDER_API_SECRET")
+        if builder_secret:
+            config.builder_api_secret = builder_secret
+
+        builder_passphrase = get_env("BUILDER_API_PASSPHRASE")
+        if builder_passphrase:
+            config.builder_api_passphrase = builder_passphrase
 
         # Other settings
         data_dir = get_env("DATA_DIR")

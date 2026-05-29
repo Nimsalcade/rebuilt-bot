@@ -64,6 +64,7 @@ class Market:
         volume: Total trading volume
     """
     id: str
+    condition_id: str
     slug: str
     question: str
     description: str
@@ -391,6 +392,7 @@ class GammaClient(ThreadLocalSessionMixin):
 
         return Market(
             id=data.get("id", data.get("slug", "")),
+            condition_id=data.get("conditionId", ""),
             slug=data.get("slug", ""),
             question=data.get("question", ""),
             description=data.get("description", ""),

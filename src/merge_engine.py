@@ -72,6 +72,7 @@ class MergeResult:
     merged_shares: float
     usdc_returned: float   # 1 share pair = $1.00 USDC
     error: Optional[str] = None
+    tx_hash: Optional[str] = None
 
 
 class MergeEngine:
@@ -129,7 +130,7 @@ class MergeEngine:
                                error=f"not enough to merge ({mergeable:.2f} < {MIN_MERGE_SHARES})")
 
         self._last_merge_at = now
-        condition_id = market.id
+        condition_id = market.condition_id
 
         if self.dry_run:
             # We deduct the merged shares, but DO NOT reduce total_cost.
@@ -146,14 +147,12 @@ class MergeEngine:
             print(terminal_ui.fmt_merge(summary.market_id, mergeable, usdc), flush=True)
             return MergeResult(success=True, merged_shares=mergeable, usdc_returned=usdc)
 
-        # Live merge via CLOB client
+        # Live merge via unified SDK client
         try:
             result = await asyncio.to_thread(
-                self._execute_merge_via_clob,
+                self._execute_merge_unified_sdk,
                 condition_id,
                 mergeable,
-                market.yes_token_id,
-                market.no_token_id,
             )
 
             if result.success:
@@ -174,107 +173,99 @@ class MergeEngine:
             return MergeResult(success=False, merged_shares=0, usdc_returned=0,
                                error=str(e))
 
-    def _execute_merge_via_clob(
+    def _execute_merge_unified_sdk(
         self,
         condition_id: str,
-        amount: float,
-        yes_token_id: str,
-        no_token_id: str,
+        amount: float | str,
     ) -> MergeResult:
+        """Execute a true on-chain gasless merge using the unified polymarket-client.
+        
+        This SDK correctly supports Deposit Wallets (POLY_1271) via WALLET batches
+        on the Relayer, ensuring guaranteed exactly $1.00 payouts per pair without
+        CLOB slippage.
         """
-        Execute merge via the py-clob-client-v2 SDK.
+        import asyncio
+        from polymarket import AsyncSecureClient, BuilderApiKey
 
-        The SDK's merge_positions() call handles neg-risk routing automatically
-        — no need for us to distinguish neg-risk vs standard markets.
-
-        The CLOB endpoint POST /merge takes:
-          {
-            "conditionId": "0x...",
-            "amount": <shares as float>,
-            "collateralToken": "0x2791Bca1...",   (USDC on Polygon)
-          }
-
-        On success, the server burns the tokens and credits USDC to our wallet.
-        The client returns the transaction hash or a success flag.
-        """
-        try:
-            clob = self.bot.clob
-
-            # Try the SDK merge method if it exists (py-clob-client-v2 >= 0.5)
-            if hasattr(clob, 'merge_positions'):
-                resp = clob.merge_positions(condition_id, amount)
-                if resp and (resp.get('success') or resp.get('transactionHash')):
-                    return MergeResult(
-                        success=True,
-                        merged_shares=amount,
-                        usdc_returned=amount,  # 1 share pair = $1.00 USDC
+        async def _do_merge():
+            current_amount = amount
+            for attempt in range(2):
+                secure_client = None
+                gasless_client = None
+                try:
+                    self.logger.info("⛽ Initiating GASLESS on-chain merge via Unified SDK...")
+                    
+                    # Create base client
+                    from py_clob_client.client import AsyncSecureClient
+                    from py_clob_client.credentials import BuilderApiKey
+                    
+                    secure_client = await AsyncSecureClient.create(
+                        private_key=self.bot.config.private_key,
+                        wallet=self.bot.config.safe_address,
+                        api_key=BuilderApiKey(
+                            key=self.bot.config.builder_api_key,
+                            secret=self.bot.config.builder_api_secret,
+                            passphrase=self.bot.config.builder_api_passphrase,
+                        ),
                     )
-                else:
-                    return MergeResult(
-                        success=False,
-                        merged_shares=0,
-                        usdc_returned=0,
-                        error=f"SDK merge returned: {resp}"
+                    
+                    # Bind to deposit wallet
+                    gasless_client = await secure_client.setup_gasless_wallet()
+                    
+                    # Execute merge (amount must be in base units: 6 decimals, or "max")
+                    merge_arg = "max" if current_amount == "max" else int(float(current_amount) * 1_000_000)
+                    handle = await gasless_client.merge_positions(
+                        condition_id=condition_id,
+                        amount=merge_arg,
                     )
+                    
+                    self.logger.info("⏳ Merge submitted to Relayer. Waiting for chain confirmation...")
+                    outcome = await handle.wait()
+                    
+                    await gasless_client.close()
+                    await secure_client.close()
+                    
+                    if outcome and outcome.transaction_hash:
+                        self.logger.info("✅ GASLESS MERGE MINED | tx_hash=%s", outcome.transaction_hash)
+                        return MergeResult(success=True, merged_shares=current_amount, usdc_returned=current_amount, tx_hash=outcome.transaction_hash)
+                    else:
+                        self.logger.warning("❌ GASLESS MERGE FAILED (No tx hash returned)")
+                        return MergeResult(success=False, merged_shares=0, usdc_returned=0, error="No tx hash returned")
+                        
+                except Exception as e:
+                    if gasless_client:
+                        try:
+                            await gasless_client.close()
+                        except: pass
+                    if secure_client:
+                        try:
+                            await secure_client.close()
+                        except: pass
+                        
+                    error_msg = str(e)
+                    import re
+                    match = re.search(r"maximum mergeable amount (\d+)", error_msg)
+                    if attempt == 0 and match and "exceeds the maximum" in error_msg:
+                        max_amount_micro = int(match.group(1))
+                        max_shares = max_amount_micro / 1_000_000.0
+                        
+                        if current_amount != "max":
+                            adjusted = max(0.0, max_shares - SNIPER_INVENTORY_RESERVE)
+                            if adjusted >= MIN_MERGE_SHARES:
+                                self.logger.warning("Merge amount exceeded actual balance. True balance: %.2f. Retrying with: %.2f", max_shares, adjusted)
+                                current_amount = adjusted
+                                continue
+                            else:
+                                self.logger.warning("Adjusted amount %.2f is below minimum %.2f, aborting merge.", adjusted, MIN_MERGE_SHARES)
+                                return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=f"Adjusted amount {adjusted} below minimum")
+                                
+                    self.logger.error("Unified SDK merge exception: %s", e)
+                    return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=str(e))
 
-            # Fallback: call the CLOB REST endpoint directly via the session
-            elif hasattr(clob, '_post') or hasattr(clob, 'session'):
-                return self._merge_via_rest(clob, condition_id, amount)
+        # We are running inside a thread (via asyncio.to_thread). We can use
+        # asyncio.run() to spin up an isolated event loop for the SDK.
+        return asyncio.run(_do_merge())
 
-            else:
-                return MergeResult(
-                    success=False, merged_shares=0, usdc_returned=0,
-                    error="CLOB client has no merge_positions method — upgrade py-clob-client-v2"
-                )
-
-        except Exception as e:
-            return MergeResult(
-                success=False, merged_shares=0, usdc_returned=0, error=str(e)
-            )
-
-    def _merge_via_rest(self, clob: Any, condition_id: str, amount: float) -> MergeResult:
-        """
-        Direct REST call to POST /merge on the CLOB API.
-        Used as a fallback if the SDK doesn't expose merge_positions().
-        """
-        import requests
-
-        USDC_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-
-        host = getattr(clob, 'host', 'https://clob.polymarket.com')
-        url = f"{host}/merge"
-
-        # Pull auth headers from the CLOB client's session/creds
-        headers = {"Content-Type": "application/json"}
-        if hasattr(clob, 'get_auth_headers'):
-            headers.update(clob.get_auth_headers())
-        elif hasattr(clob, 'creds') and clob.creds:
-            headers["POLY-API-KEY"] = clob.creds.api_key
-            headers["POLY-API-SECRET"] = clob.creds.api_secret
-            headers["POLY-API-PASSPHRASE"] = clob.creds.api_passphrase
-
-        payload = {
-            "conditionId": condition_id,
-            "amount": str(int(amount * 1_000_000)),  # micro-USDC
-            "collateralToken": USDC_POLYGON,
-        }
-
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-
-        if resp.status_code in (200, 201):
-            data = resp.json() if resp.content else {}
-            return MergeResult(
-                success=True,
-                merged_shares=amount,
-                usdc_returned=amount,
-            )
-        else:
-            return MergeResult(
-                success=False,
-                merged_shares=0,
-                usdc_returned=0,
-                error=f"REST merge failed: HTTP {resp.status_code} — {resp.text[:200]}"
-            )
 
     def log_session_summary(self) -> None:
         """Log total merges for this session."""
