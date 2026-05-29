@@ -16,11 +16,30 @@ class SweepManager:
     Handles automated profit sweeps from the Polymarket wallet to an external address.
     Uses the Polymarket Bridge API to generate a gateway address, then uses Web3.py
     to push the USDC.e to the gateway.
+
+    PROGRESSIVE ESCALATION (mirrors gabagool22's growth pattern):
+      Tier 0 (sweeps 0-1):  reserve=$200,   threshold=$1,000  → sweep ~$800
+      Tier 1 (sweeps 2-3):  reserve=$1,000,  threshold=$5,000  → sweep ~$4,000
+      Tier 2 (sweeps 4-5):  reserve=$2,000,  threshold=$10,000 → sweep ~$8,000
+      Tier 3 (sweeps 6+):   reserve=$5,000,  threshold=$25,000 → sweep ~$20,000
+
+    The first 2 sweeps validate the pipeline (test transfer, bridge routing).
+    After that, the reserve increases so the bot compounds from a larger base,
+    producing exponentially larger sweeps — exactly how g22 scaled from
+    $2K → $6.5K → $13K → $28K → $33K.
     """
     
     # USDC.e on Polygon
     USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
     POLYGON_CHAIN_ID = 137
+
+    # Progressive sweep tiers: (min_sweeps, reserve_bankroll, sweep_threshold)
+    ESCALATION_TIERS = [
+        (0,  200.0,   1000.0),   # Tier 0: validation — prove the pipeline works
+        (2,  1000.0,  5000.0),   # Tier 1: scale up — compound from $1K base
+        (4,  2000.0,  10000.0),  # Tier 2: growth — compound from $2K base
+        (6,  5000.0,  25000.0),  # Tier 3: g22 mode — big sweeps, big base
+    ]
 
     def __init__(self, bot, config, logger=None):
         self.bot = bot
@@ -37,18 +56,63 @@ class SweepManager:
         else:
             self.w3 = None
 
+        # Load persistent sweep counter
+        self._sweep_state_path = "data/sweep_state.json"
+        self._sweep_count = self._load_sweep_count()
+        self._apply_tier()
+
+    def _load_sweep_count(self) -> int:
+        """Load sweep count from persistent state file."""
+        import json, os
+        try:
+            if os.path.exists(self._sweep_state_path):
+                with open(self._sweep_state_path, 'r') as f:
+                    state = json.load(f)
+                    count = state.get("sweep_count", 0)
+                    self.logger.debug("Loaded sweep count: %d", count)
+                    return count
+        except Exception as e:
+            self.logger.warning("Could not load sweep state: %s", e)
+        return 0
+
+    def _save_sweep_count(self) -> None:
+        """Persist sweep count so restarts don't reset the tier."""
+        import json
+        try:
+            with open(self._sweep_state_path, 'w') as f:
+                json.dump({"sweep_count": self._sweep_count, "updated_at": time.time()}, f)
+        except Exception as e:
+            self.logger.warning("Could not save sweep state: %s", e)
+
+    def _apply_tier(self) -> None:
+        """Set reserve and threshold based on current sweep count."""
+        active_tier = self.ESCALATION_TIERS[0]
+        for min_sweeps, reserve, threshold in self.ESCALATION_TIERS:
+            if self._sweep_count >= min_sweeps:
+                active_tier = (min_sweeps, reserve, threshold)
+        
+        _, self._active_reserve, self._active_threshold = active_tier
+        tier_idx = next(
+            i for i, (ms, _, _) in enumerate(self.ESCALATION_TIERS)
+            if ms == active_tier[0]
+        )
+        self.logger.info(
+            "Sweep tier %d active | sweeps_completed=%d | reserve=$%.0f | threshold=$%.0f",
+            tier_idx, self._sweep_count, self._active_reserve, self._active_threshold
+        )
+
     async def check_and_sweep(self, current_balance: float) -> float:
         """
-        Evaluates the current balance against the threshold and executes a sweep if needed.
-        Returns the new balance after the sweep.
+        Evaluates the current balance against the ACTIVE TIER threshold
+        and executes a sweep if needed. Returns the new balance after the sweep.
         """
         if not self.config.enabled:
             return current_balance
 
-        if current_balance < self.config.sweep_threshold:
+        if current_balance < self._active_threshold:
             return current_balance
 
-        amount_to_sweep = current_balance - self.config.reserve_bankroll
+        amount_to_sweep = current_balance - self._active_reserve
         
         # Safety limit for slippage protection (from tutorial)
         if amount_to_sweep > 50000.0:
@@ -56,7 +120,10 @@ class SweepManager:
 
         self.logger.info("=" * 60)
         self.logger.info("🧹 PROFIT SWEEPER INITIATED")
-        self.logger.info(f"Balance: ${current_balance:.2f} | Threshold: ${self.config.sweep_threshold:.2f}")
+        self.logger.info(
+            "Balance: $%.2f | Tier threshold: $%.0f | Reserve: $%.0f | Sweep: $%.2f",
+            current_balance, self._active_threshold, self._active_reserve, amount_to_sweep
+        )
         
         if not self.has_done_test:
             self.logger.info("Running $1.00 safety test transfer first...")
@@ -78,10 +145,22 @@ class SweepManager:
             self.logger.info(f"Executing sweep of ${amount_to_sweep:.2f}...")
             await self._execute_sweep(amount_to_sweep)
 
+        # Record successful sweep and check for tier escalation
+        self._sweep_count += 1
+        self._save_sweep_count()
+        old_reserve = self._active_reserve
+        self._apply_tier()
+        if self._active_reserve > old_reserve:
+            self.logger.info(
+                "📈 TIER ESCALATED | New reserve: $%.0f | New threshold: $%.0f | "
+                "Bot will now compound from a larger base",
+                self._active_reserve, self._active_threshold
+            )
+
         self.logger.info("=" * 60)
         # We assume the sweep was successful and balance is now the reserve.
         # The CapitalManager will poll the true balance anyway.
-        return self.config.reserve_bankroll
+        return self._active_reserve
 
     async def _execute_sweep(self, amount: float) -> bool:
         """Registers the withdrawal and broadcasts the ERC20 transfer."""
