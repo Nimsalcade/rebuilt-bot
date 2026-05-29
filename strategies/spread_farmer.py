@@ -19,7 +19,8 @@ class SpreadFarmerStrategy:
         paper_trader = None
         if dry_run:
             paper_trader = PaperTrader(
-                initial_balance=getattr(config.gabagool, "session_capital_usd", 200.0)
+                ledger_path="data/paper_ledger.json",
+                starting_balance=getattr(config.gabagool, "session_capital_usd", 200.0)
             )
 
         self.window_manager = WindowManager(
