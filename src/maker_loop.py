@@ -487,7 +487,19 @@ class MakerLoop:
         if self.dry_run:
             return 0.30, 0.70
         try:
-            return await asyncio.to_thread(self.bot.get_bids, market)
+            yes_spread, no_spread = await asyncio.gather(
+                asyncio.to_thread(self.bot.get_spread, market.yes_token_id),
+                asyncio.to_thread(self.bot.get_spread, market.no_token_id),
+            )
+            yes_bid = yes_spread.get("bid", 0.0)
+            no_bid  = no_spread.get("bid", 0.0)
+            if yes_bid <= 0 or no_bid <= 0:
+                return None, None
+            return yes_bid, no_bid
+        except ValueError as e:
+            if "Not Found" in str(e):
+                raise
+            return None, None
         except Exception:
             return None, None
 

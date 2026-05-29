@@ -116,13 +116,6 @@ class CapitalManager:
         # Try to get BTC and ETH prices if available
         btc_price = None
         eth_price = None
-        try:
-            from src.price_feed import CryptoFeed
-            if CryptoFeed._last_btc_price > 0:
-                btc_price = CryptoFeed._last_btc_price
-                eth_price = CryptoFeed._last_eth_price
-        except Exception:
-            pass
             
         print(terminal_ui.fmt_cycle_header(mode, btc_price, eth_price), flush=True)
         

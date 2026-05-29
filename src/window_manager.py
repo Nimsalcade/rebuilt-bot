@@ -180,10 +180,13 @@ class WindowManager:
             if len(self._sessions) >= MAX_CONCURRENT_SESSIONS:
                 break
                 
-            is_1h = "15m" not in m.slug.lower()
-            if is_1h:
-                current_1h = sum(1 for s in self._sessions.values() if "15m" not in s.market.slug.lower())
-                if current_1h >= MAX_1H_SESSIONS:
+            duration = (m.slug or m.id or "").lower()
+            if "15m" not in duration and ("up-or-down" in duration or "1h" in duration):
+                active_1h = sum(
+                    1 for s in self._sessions.values()
+                    if "15m" not in (s.market.slug or s.market.id or "").lower()
+                )
+                if active_1h >= MAX_1H_SESSIONS:
                     continue
 
 
