@@ -21,12 +21,13 @@ class SweepManager:
       Tier 0 (sweeps 0-1):  reserve=$200,   threshold=$1,000  → sweep ~$800
       Tier 1 (sweeps 2-3):  reserve=$1,000,  threshold=$5,000  → sweep ~$4,000
       Tier 2 (sweeps 4-5):  reserve=$2,000,  threshold=$10,000 → sweep ~$8,000
-      Tier 3 (sweeps 6+):   reserve=$5,000,  threshold=$25,000 → sweep ~$20,000
+      Tier 3 (sweeps 6+):   reserve=$2,000,  threshold=$25,000 → sweep ~$23,000
 
     The first 2 sweeps validate the pipeline (test transfer, bridge routing).
     After that, the reserve increases so the bot compounds from a larger base,
     producing exponentially larger sweeps — exactly how g22 scaled from
     $2K → $6.5K → $13K → $28K → $33K.
+    Reserve is capped at $2,000 — never more than that stays in the wallet.
     """
     
     # USDC.e on Polygon
@@ -38,7 +39,7 @@ class SweepManager:
         (0,  200.0,   1000.0),   # Tier 0: validation — prove the pipeline works
         (2,  1000.0,  5000.0),   # Tier 1: scale up — compound from $1K base
         (4,  2000.0,  10000.0),  # Tier 2: growth — compound from $2K base
-        (6,  5000.0,  25000.0),  # Tier 3: g22 mode — big sweeps, big base
+        (6,  2000.0,  25000.0),  # Tier 3: max mode — reserve capped at $2K, big sweeps
     ]
 
     def __init__(self, bot, config, logger=None):
