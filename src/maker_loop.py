@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 from .merge_engine import MergeEngine, MIN_MERGE_SHARES
 import src.terminal_ui as terminal_ui
