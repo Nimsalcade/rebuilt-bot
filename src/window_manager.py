@@ -186,11 +186,7 @@ class WindowManager:
                 if current_1h >= MAX_1H_SESSIONS:
                     continue
 
-            # Start delay check
-            if m.start_date:
-                age_s = (now - m.start_date).total_seconds()
-                if age_s < WINDOW_START_DELAY_S:
-                    continue
+
 
             self._seen_market_ids.add(m.id)
             self._start_session(m)
