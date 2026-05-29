@@ -166,7 +166,7 @@ class WindowManager:
     async def _discover_windows(self, assets: List[str]) -> None:
         """Query Gamma API for active windows on target assets."""
         try:
-            markets = await asyncio.to_thread(self.gamma.get_active_windows, assets)
+            markets = await asyncio.to_thread(self.gamma.get_all_active_markets, assets)
         except Exception as e:
             self.logger.warning("Gamma API error during discovery: %s", e)
             return
