@@ -194,8 +194,8 @@ class WindowManager:
     def _start_session(self, market: Market) -> None:
         """Spawn a MakerLoop task for the market."""
         self.logger.info(
-            "Starting MakerLoop for %s (%s) | ends: %s",
-            market.id[:16], market.asset, market.end_date.strftime("%H:%M:%S")
+            "Starting MakerLoop for %s | ends: %s",
+            market.id[:16], market.end_date.strftime("%H:%M:%S") if market.end_date else "N/A"
         )
 
         gabagool_cfg = getattr(self.config, 'gabagool', self.config)
