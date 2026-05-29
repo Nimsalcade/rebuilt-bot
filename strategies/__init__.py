@@ -5,6 +5,6 @@ Gabagool Bot - Strategies Package
 Precision Snipe-Maker strategy (latency arbitrage).
 """
 
-from .snipe_maker import SnipeMakerStrategy
+from .spread_farmer import SpreadFarmerStrategy
 
-__all__ = ["SnipeMakerStrategy"]
+__all__ = ["SpreadFarmerStrategy"]
