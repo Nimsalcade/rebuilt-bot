@@ -39,14 +39,15 @@ FARM_REFRESH_S     = 15.0      # How often to repost the full ladder
 MAX_ORDER_AGE_S    = 15.0      # Cancel and repost if order older than this
 FARM_MAX_SHARES    = 500       # Max total farming shares per side per window
 
-# --- Gabagool22-style price ladder ---
-LADDER_STEPS = [
-    0.10, 0.15, 0.20,
-    0.25, 0.30, 0.35,
-    0.40, 0.45, 0.50,
-    0.55, 0.60, 0.65,
-    0.70, 0.75, 0.80,
-]
+# --- Book-aware tight ladder ---
+# gabagool's edge is refusal, not pricing: he only posts where the live book
+# already sums below 1.00, and he posts AT the touch — not across a static
+# 0.10–0.80 ladder that gets adversely selected at its expensive top rungs.
+# So instead of a fixed ladder we read the live best ask on each side and post
+# a few tight rungs just below it, but only when the combined touch leaves room.
+TICK_SIZE          = 0.01     # Polymarket price increment
+TIGHT_LADDER_RUNGS = 3        # rungs to post just below each side's best ask
+TIGHT_LADDER_STEP  = 0.01     # spacing between tight rungs (in price)
 
 # --- Dollar-targeted sizing per rung ---
 RUNG_DOLLAR_TARGETS = [
@@ -219,6 +220,8 @@ class MakerLoop:
 
         cached_yes_bid: Optional[float] = None
         cached_no_bid:  Optional[float] = None
+        cached_yes_ask: Optional[float] = None
+        cached_no_ask:  Optional[float] = None
         last_bid_fetch_at: float = 0.0
         BID_CACHE_TTL_S = FARM_REFRESH_S
 
@@ -263,19 +266,22 @@ class MakerLoop:
                     need_bids = (now - last_bid_fetch_at) >= BID_CACHE_TTL_S
                     if need_bids:
                         try:
-                            cached_yes_bid, cached_no_bid = await self._get_bids(market)
+                            (cached_yes_bid, cached_no_bid,
+                             cached_yes_ask, cached_no_ask) = await self._get_quotes(market)
                             last_bid_fetch_at = now
                         except (ValueError, TypeError):
                             self.logger.warning("Market %s 404 — ending loop", market_id[:16])
                             break
 
-                    if cached_yes_bid is None or cached_no_bid is None:
+                    if (cached_yes_bid is None or cached_no_bid is None
+                            or cached_yes_ask is None or cached_no_ask is None):
                         await asyncio.sleep(1.0)
                         continue
 
                     # Post farming orders
                     await self._farm_orders(
                         market, cached_yes_bid, cached_no_bid,
+                        cached_yes_ask, cached_no_ask,
                         active_orders, summary,
                         last_up_post_at, last_down_post_at,
                         now,
@@ -356,27 +362,49 @@ class MakerLoop:
         market: Any,
         yes_bid: float,
         no_bid: float,
+        yes_ask: float,
+        no_ask: float,
         active_orders: Dict[str, OrderRecord],
         summary: WindowFillSummary,
         last_up_post_at: float,
         last_down_post_at: float,
         now: float,
     ) -> None:
-        """Post the full price ladder on both sides."""
-        
-        # Combined cost gate (global check)
+        """Post tight rungs against the live book — but only when it's cheap.
+
+        The default action is to NOT trade. We only post when the combined cost
+        AT THE TOUCH (the two best asks we'd actually fill against) leaves a
+        spread to capture; otherwise forcing fills just buys losing pairs.
+        """
+
+        # --- Primary refusal: combined cost at the live touch ---
+        # best_ask_up + best_ask_down is what a pair costs RIGHT NOW. If it's
+        # already at/above the gate there is no spread to capture, so we post
+        # nothing this cycle. This is the single line that stops us from ever
+        # buying a pair above the gate, evaluated against the live asks every
+        # cycle — not against historical averages, and not gated on whether we
+        # already hold fills.
+        combined_touch = yes_ask + no_ask
+        if combined_touch >= MAX_COMBINED_COST_GATE:
+            if summary.market_id not in self._cost_gate_logged_for_window:
+                print(terminal_ui.fmt_gate(
+                    summary.market_id,
+                    yes_ask,
+                    no_ask,
+                    combined_touch,
+                    MAX_COMBINED_COST_GATE
+                ), flush=True)
+                self._cost_gate_logged_for_window.add(summary.market_id)
+            return  # market isn't cheap — refuse it this cycle
+        # Market became cheap again — allow the gate banner to re-log if it
+        # later closes back up.
+        self._cost_gate_logged_for_window.discard(summary.market_id)
+
+        # Secondary safety: realized combined average gate (defends against a
+        # book that moved against us between post and fill).
         if summary.up_shares > 0 and summary.down_shares > 0:
             combined = summary.up_avg_cost + summary.down_avg_cost
             if combined > MAX_COMBINED_COST_GATE:
-                if summary.market_id not in self._cost_gate_logged_for_window:
-                    print(terminal_ui.fmt_gate(
-                        summary.market_id,
-                        summary.up_avg_cost,
-                        summary.down_avg_cost,
-                        combined,
-                        MAX_COMBINED_COST_GATE
-                    ), flush=True)
-                    self._cost_gate_logged_for_window.add(summary.market_id)
                 return  # stop posting
 
         # Hard capital cap (Capital at Work)
@@ -421,37 +449,64 @@ class MakerLoop:
 
         if post_up and summary.up_shares < self.farm_max_shares:
             if (now - last_up_post_at) >= FARM_REFRESH_S:
+                # UP rungs sit just below the UP best ask; gated against the
+                # live DOWN best ask (the price the other leg would fill at).
                 await self._post_ladder(
-                    market.yes_token_id, "UP", active_orders, summary
+                    market.yes_token_id, "UP", yes_ask, no_ask,
+                    active_orders, summary
                 )
 
         if post_down and summary.down_shares < self.farm_max_shares:
             if (now - last_down_post_at) >= FARM_REFRESH_S:
                 await self._post_ladder(
-                    market.no_token_id, "DOWN", active_orders, summary
+                    market.no_token_id, "DOWN", no_ask, yes_ask,
+                    active_orders, summary
                 )
 
+
+    def _build_tight_ladder(self, best_ask: float, other_ask: float) -> list:
+        """Rungs just below our best ask that still clear the combined gate.
+
+        We bid into the touch (one tick below best_ask, then a few ticks down)
+        rather than spanning the whole 0.10–0.80 range. Every rung is checked
+        against the LIVE opposite ask so the pair can never sum to the gate —
+        this is the absolute, fill-by-fill version of the cost gate.
+        """
+        rungs: list = []
+        top = round(best_ask - TICK_SIZE, 2)
+        for i in range(TIGHT_LADDER_RUNGS):
+            price = round(top - i * TIGHT_LADDER_STEP, 2)
+            if price <= 0.0:
+                break
+            # Absolute per-rung gate vs the live opposite ask.
+            if round(price + other_ask, 4) > MAX_COMBINED_COST_GATE:
+                continue
+            rungs.append(price)
+        return rungs
 
     async def _post_ladder(
         self,
         token_id: str,
         side: str,
+        best_ask: float,
+        other_ask: float,
         active_orders: Dict[str, OrderRecord],
         summary: WindowFillSummary,
     ) -> None:
-        """Post the full price ladder sequentially to avoid 425 rate-limit errors."""
+        """Post a few tight rungs just below our best ask, gated on the live touch."""
+        rungs = self._build_tight_ladder(best_ask, other_ask)
         placed = 0
-        for price in LADDER_STEPS:
+        for price in rungs:
             result = await self._post_ladder_rung(
-                token_id, side, price, active_orders, summary
+                token_id, side, price, other_ask, active_orders, summary
             )
             if result:
                 placed += 1
-            await asyncio.sleep(0.08)   # 80ms between rungs = ~1.2s for full ladder
-        
+            await asyncio.sleep(0.08)   # 80ms between rungs to avoid 425 rate-limits
+
         self.logger.debug(
-            "Ladder posted: %s %s | %d/%d rungs",
-            side, summary.market_id[:12], placed, len(LADDER_STEPS)
+            "Tight ladder posted: %s %s | %d/%d rungs (ask=%.2f, other_ask=%.2f)",
+            side, summary.market_id[:12], placed, len(rungs), best_ask, other_ask
         )
 
     async def _post_ladder_rung(
@@ -459,20 +514,18 @@ class MakerLoop:
         token_id: str,
         side: str,
         price: float,
+        other_ask: float,
         active_orders: Dict[str, OrderRecord],
         summary: WindowFillSummary,
     ) -> bool:
-        """Post a single GTC limit order at one rung of the ladder with per-rung pre-checks."""
-        
-        # Per-rung pre-check: would this rung push the combined average over the gate?
-        if side == "UP" and summary.down_gross_shares > 0:
-            projected = price + summary.down_avg_cost
-            if projected > MAX_COMBINED_COST_GATE:
-                return False  # skip this rung — too expensive
-        elif side == "DOWN" and summary.up_gross_shares > 0:
-            projected = summary.up_avg_cost + price
-            if projected > MAX_COMBINED_COST_GATE:
-                return False  # skip this rung — too expensive
+        """Post a single GTC limit order at one rung with an absolute per-rung gate."""
+
+        # Absolute per-rung pre-check: this rung's fill price plus the price the
+        # OTHER leg would fill at (its live best ask) must clear the gate. This
+        # fires on every post, with or without existing fills — so we never
+        # complete a pair above the gate.
+        if round(price + other_ask, 4) > MAX_COMBINED_COST_GATE:
+            return False  # skip this rung — completing the pair would be too expensive
 
         # Skip if already covered
         for o in list(active_orders.values()):
@@ -537,9 +590,19 @@ class MakerLoop:
     # Market Data & Recon
     # =========================================================================
 
-    async def _get_bids(self, market: Any) -> Tuple[Optional[float], Optional[float]]:
+    async def _get_quotes(
+        self, market: Any
+    ) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+        """Return (yes_bid, no_bid, yes_ask, no_ask) from the live book.
+
+        The asks are the prices we would actually FILL at as a buyer, so the
+        entry logic gates on them — not on the bids. Returns Nones if the book
+        is missing a side so callers can skip this cycle instead of guessing.
+        """
         if self.dry_run:
-            return 0.30, 0.70
+            # Coherent fake book that sums below the gate (0.48 + 0.48 = 0.96)
+            # so dry runs still exercise the posting path.
+            return 0.46, 0.46, 0.48, 0.48
         try:
             yes_spread, no_spread = await asyncio.gather(
                 asyncio.to_thread(self.bot.get_spread, market.yes_token_id),
@@ -547,15 +610,17 @@ class MakerLoop:
             )
             yes_bid = yes_spread.get("bid", 0.0)
             no_bid  = no_spread.get("bid", 0.0)
-            if yes_bid <= 0 or no_bid <= 0:
-                return None, None
-            return yes_bid, no_bid
+            yes_ask = yes_spread.get("ask", 0.0)
+            no_ask  = no_spread.get("ask", 0.0)
+            if yes_bid <= 0 or no_bid <= 0 or yes_ask <= 0 or no_ask <= 0:
+                return None, None, None, None
+            return yes_bid, no_bid, yes_ask, no_ask
         except ValueError as e:
             if "Not Found" in str(e):
                 raise
-            return None, None
+            return None, None, None, None
         except Exception:
-            return None, None
+            return None, None, None, None
 
     async def _reconcile_fills(
         self,

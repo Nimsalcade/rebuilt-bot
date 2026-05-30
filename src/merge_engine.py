@@ -183,6 +183,7 @@ class MergeEngine:
                     self.logger.info("⛽ Initiating GASLESS on-chain merge via Relayer SDK...")
                     
                     from py_builder_relayer_client.client import RelayClient, RelayerTxType
+                    from py_builder_relayer_client.models import Transaction
                     from py_builder_signing_sdk.config import BuilderConfig, BuilderApiKeyCreds
                     
                     # Ensure amount is in base units (6 decimals for USDC collateral)
@@ -226,21 +227,38 @@ class MergeEngine:
                         args=[Web3.to_bytes(hexstr=condition_id), merge_arg]
                     )
 
-                    merge_tx = {
-                        "to": NEG_RISK_ADAPTER,
-                        "data": tx_data,
-                        "value": "0"
-                    }
+                    # RelayClient.execute() consumes Transaction dataclasses and
+                    # reads t.to / t.data / t.value as attributes — a plain dict
+                    # raises AttributeError, so build the model the SDK expects.
+                    merge_tx = Transaction(
+                        to=NEG_RISK_ADAPTER,
+                        data=tx_data,
+                        value="0",
+                    )
 
                     # Execute via the Relayer SDK (synchronous call wrapping in asyncio)
                     self.logger.info("⏳ Merge submitted to Relayer. Waiting for confirmation...")
                     response = await asyncio.to_thread(client.execute, [merge_tx], "Merge pairs")
-                    
-                    # Wait for transaction confirmation
+
+                    # The response already carries the submitted tx hash; capture it
+                    # up front so we still have a reference even if polling times out.
+                    submitted_hash = getattr(response, "transaction_hash", None) or getattr(response, "hash", None)
+
+                    # Wait for on-chain confirmation. poll_until_state() returns the
+                    # transaction dict on success or None on timeout/fail-state — so
+                    # guard against None instead of calling .get() on it blindly.
                     result = await asyncio.to_thread(response.wait)
-                    
-                    # The relayer returns the transaction hash in the result object
-                    tx_hash = result.get('transactionHash', result.get('hash', 'success'))
+                    if not result:
+                        self.logger.error(
+                            "Merge submitted (hash=%s) but did not confirm before timeout.",
+                            submitted_hash,
+                        )
+                        return MergeResult(
+                            success=False, merged_shares=0, usdc_returned=0,
+                            error=f"merge not confirmed before timeout (hash={submitted_hash})",
+                        )
+
+                    tx_hash = result.get("transactionHash") or result.get("hash") or submitted_hash or "success"
                     self.logger.info("✅ GASLESS MERGE MINED | tx_hash=%s", tx_hash)
                     
                     return MergeResult(
