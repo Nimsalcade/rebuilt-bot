@@ -34,20 +34,18 @@ import src.terminal_ui as terminal_ui
 # ============================================================================
 
 # --- Farming parameters ---
-FARM_ORDER_SHARES  = 10        
-FARM_REFRESH_S     = 15.0      # How often to repost the full ladder
-MAX_ORDER_AGE_S    = 15.0      # Cancel and repost if order older than this
+FARM_ORDER_SHARES  = 10
 FARM_MAX_SHARES    = 500       # Max total farming shares per side per window
 
-# --- Book-aware tight ladder ---
-# gabagool's edge is refusal, not pricing: he only posts where the live book
-# already sums below 1.00, and he posts AT the touch — not across a static
-# 0.10–0.80 ladder that gets adversely selected at its expensive top rungs.
-# So instead of a fixed ladder we read the live best ask on each side and post
-# a few tight rungs just below it, but only when the combined touch leaves room.
-TICK_SIZE          = 0.01     # Polymarket price increment
-TIGHT_LADDER_RUNGS = 3        # rungs to post just below each side's best ask
-TIGHT_LADDER_STEP  = 0.01     # spacing between tight rungs (in price)
+# --- Maker quoting parameters ---
+# We are a MAKER. We post resting buy orders INSIDE the spread, summing to at
+# most TARGET_COMBINED, split by each side's fair value, and re-price them as
+# the book moves. We NEVER cross the ask (that would make us a taker, which a
+# healthy book — summing to ~1.01 at the asks — turns into a guaranteed loss).
+TARGET_COMBINED    = 0.97     # max sum of our two resting bids = the merge profit budget
+TICK               = 0.01     # Polymarket min price increment
+REQUOTE_INTERVAL_S = 3.0      # how often we re-price (TUNE LIVE — start at 3s)
+STALE_DRIFT        = 0.02     # re-quote a side if its resting price drifts this far from target
 
 # --- Dollar-targeted sizing per rung ---
 RUNG_DOLLAR_TARGETS = [
@@ -58,9 +56,6 @@ RUNG_DOLLAR_TARGETS = [
 
 # --- Window close buffer ---
 STOP_POSTING_BUFFER_S = 60     # Stop all orders 60s before window end
-
-# --- Combined cost gate ---
-MAX_COMBINED_COST_GATE = 0.97
 
 # ============================================================================
 # Data Classes
@@ -169,8 +164,7 @@ class MakerLoop:
         self.stop_posting_buffer_s = stop_posting_buffer_s
         self.window_capital_cap    = window_capital_cap
         self.logger                = logging.getLogger("maker_loop")
-        self._cost_gate_logged_for_window: set = set()
-        
+
         self._is_paused_up = False
         self._is_paused_down = False
 
@@ -223,7 +217,7 @@ class MakerLoop:
         cached_yes_ask: Optional[float] = None
         cached_no_ask:  Optional[float] = None
         last_bid_fetch_at: float = 0.0
-        BID_CACHE_TTL_S = FARM_REFRESH_S
+        BID_CACHE_TTL_S = REQUOTE_INTERVAL_S
 
         last_status_log_at: float = 0.0
         STATUS_LOG_INTERVAL_S = 60.0
@@ -278,8 +272,8 @@ class MakerLoop:
                         await asyncio.sleep(1.0)
                         continue
 
-                    # Post farming orders
-                    await self._farm_orders(
+                    # Maker quote cycle: rest bids inside the spread
+                    await self._quote_market(
                         market, cached_yes_bid, cached_no_bid,
                         cached_yes_ask, cached_no_ask,
                         active_orders, summary,
@@ -287,20 +281,22 @@ class MakerLoop:
                         now,
                     )
                     
-                    if (now - last_up_post_at) >= FARM_REFRESH_S:
+                    if (now - last_up_post_at) >= REQUOTE_INTERVAL_S:
                         last_up_post_at = now
-                    if (now - last_down_post_at) >= FARM_REFRESH_S:
+                    if (now - last_down_post_at) >= REQUOTE_INTERVAL_S:
                         last_down_post_at = now
 
                     # Reconcile fills
                     await self._reconcile_fills(market_id, market.condition_id, active_orders, summary)
 
-                    # Try to merge
+                    # Merge matched pairs IMMEDIATELY — locked $1.00 pairs can no
+                    # longer be adversely selected; only the naked remainder can.
                     if summary.up_shares > 0 and summary.down_shares > 0:
                         await self.merge_engine.try_merge(market, summary)
 
-                    # Cancel stale
-                    await self._cancel_stale(active_orders)
+                    # NOTE: no age-based stale-cancel here. As a maker we keep a
+                    # resting bid in place as long as it's well-priced (preserving
+                    # queue position); _quote_market re-quotes only on price drift.
 
                     # Log status
                     if (now - last_status_log_at) >= STATUS_LOG_INTERVAL_S and elapsed_s > 1:
@@ -357,7 +353,40 @@ class MakerLoop:
     # Farming
     # =========================================================================
 
-    async def _farm_orders(
+    def _compute_maker_bids(
+        self, yes_bid: float, no_bid: float, yes_ask: float, no_ask: float
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Fair-value split of the TARGET_COMBINED budget, capped below each ask.
+
+        Implements PRD steps 2-5: price each side off the mid-implied fair value,
+        allocate the $0.97 budget proportionally, then cap each bid one tick under
+        its ask so we are ALWAYS a maker — never crossing the spread.
+        """
+        mid_up   = (yes_bid + yes_ask) / 2.0
+        mid_down = (no_bid + no_ask) / 2.0
+        total    = mid_up + mid_down
+        if total <= 0:
+            return None, None
+        fair_up   = mid_up   / total
+        fair_down = mid_down / total
+
+        # Step 3: split the budget by fair value (sums to TARGET_COMBINED).
+        target_up   = TARGET_COMBINED * fair_up
+        target_down = TARGET_COMBINED * fair_down
+
+        # Step 4: cap strictly below the ask so we never take.
+        up_bid   = round(min(target_up,   yes_ask - TICK), 2)
+        down_bid = round(min(target_down, no_ask  - TICK), 2)
+
+        # Step 5: rounding can push the sum over budget — shave the larger side.
+        while round(up_bid + down_bid, 2) > TARGET_COMBINED:
+            if up_bid >= down_bid:
+                up_bid = round(up_bid - TICK, 2)
+            else:
+                down_bid = round(down_bid - TICK, 2)
+        return up_bid, down_bid
+
+    async def _quote_market(
         self,
         market: Any,
         yes_bid: float,
@@ -370,168 +399,118 @@ class MakerLoop:
         last_down_post_at: float,
         now: float,
     ) -> None:
-        """Post tight rungs against the live book — but only when it's cheap.
+        """Maker quote cycle: rest bids INSIDE the spread, summing <= TARGET_COMBINED.
 
-        The default action is to NOT trade. We only post when the combined cost
-        AT THE TOUCH (the two best asks we'd actually fill against) leaves a
-        spread to capture; otherwise forcing fills just buys losing pairs.
+        We do NOT read the ask and refuse. We compute fair-value bids under both
+        asks, post them as resting GTC orders, and re-price on drift. We get
+        filled by sellers crossing to us — earning the spread instead of paying
+        it. Inventory is balanced by the existing deadband; matched pairs are
+        merged immediately by the caller.
         """
 
-        # --- Primary refusal: combined cost at the live touch ---
-        # best_ask_up + best_ask_down is what a pair costs RIGHT NOW. If it's
-        # already at/above the gate there is no spread to capture, so we post
-        # nothing this cycle. This is the single line that stops us from ever
-        # buying a pair above the gate, evaluated against the live asks every
-        # cycle — not against historical averages, and not gated on whether we
-        # already hold fills.
-        combined_touch = yes_ask + no_ask
-        if combined_touch >= MAX_COMBINED_COST_GATE:
-            if summary.market_id not in self._cost_gate_logged_for_window:
-                print(terminal_ui.fmt_gate(
-                    summary.market_id,
-                    yes_ask,
-                    no_ask,
-                    combined_touch,
-                    MAX_COMBINED_COST_GATE
-                ), flush=True)
-                self._cost_gate_logged_for_window.add(summary.market_id)
-            return  # market isn't cheap — refuse it this cycle
-        # Market became cheap again — allow the gate banner to re-log if it
-        # later closes back up.
-        self._cost_gate_logged_for_window.discard(summary.market_id)
-
-        # Secondary safety: realized combined average gate (defends against a
-        # book that moved against us between post and fill).
-        if summary.up_shares > 0 and summary.down_shares > 0:
-            combined = summary.up_avg_cost + summary.down_avg_cost
-            if combined > MAX_COMBINED_COST_GATE:
-                return  # stop posting
-
-        # Hard capital cap (Capital at Work)
+        # Hard capital cap (Capital at Work) — unchanged guard.
         held_value = (summary.up_shares * summary.up_avg_cost + summary.down_shares * summary.down_avg_cost)
         locked_resting = sum(o.price * o.shares for o in list(active_orders.values()))
-        capital_at_work = held_value + locked_resting
-        if capital_at_work >= self.window_capital_cap:
+        if held_value + locked_resting >= self.window_capital_cap:
             return
 
-        # NEW: Inventory Balance Cap (Max Lean) with Hysteresis
-        # Prevent accumulating a massive directional position by halting the heavy side
-        # and actively cancelling its resting orders to prevent soft-cap leakage.
-        
+        # Inventory Balance Cap (deadband) with hysteresis — REUSED unchanged.
+        # As a maker we hold inventory, so this is the primary adverse-selection
+        # defense: halt (and cancel) the heavy side until the other catches up.
         up, dn = summary.up_shares, summary.down_shares
         lean_up = (up - dn) / max(up, dn, 1)
         lean_dn = (dn - up) / max(up, dn, 1)
-        
-        # Enter pause on the upper threshold
+
         if not self._is_paused_up and lean_up > 0.15 and (up - dn) > 10.0:
             self._is_paused_up = True
-            # Actively cancel resting UP orders to stop the bleed
             for oid, o in list(active_orders.items()):
                 if o.side == "UP":
                     await self._cancel_order(oid, active_orders)
-                    
+
         if not self._is_paused_down and lean_dn > 0.15 and (dn - up) > 10.0:
             self._is_paused_down = True
-            # Actively cancel resting DOWN orders to stop the bleed
             for oid, o in list(active_orders.items()):
                 if o.side == "DOWN":
                     await self._cancel_order(oid, active_orders)
 
-        # Exit pause only on the lower threshold
         if self._is_paused_up and lean_up < 0.06:
             self._is_paused_up = False
-            
         if self._is_paused_down and lean_dn < 0.06:
             self._is_paused_down = False
 
-        post_up = not self._is_paused_up
-        post_down = not self._is_paused_down
+        # Fair-value split bids (capped below the asks).
+        up_bid, down_bid = self._compute_maker_bids(yes_bid, no_bid, yes_ask, no_ask)
+        if up_bid is None:
+            return
 
-        if post_up and summary.up_shares < self.farm_max_shares:
-            if (now - last_up_post_at) >= FARM_REFRESH_S:
-                # UP rungs sit just below the UP best ask; gated against the
-                # live DOWN best ask (the price the other leg would fill at).
-                await self._post_ladder(
-                    market.yes_token_id, "UP", yes_ask, no_ask,
-                    active_orders, summary
-                )
+        post_up = (
+            not self._is_paused_up
+            and summary.up_shares < self.farm_max_shares
+            and (now - last_up_post_at) >= REQUOTE_INTERVAL_S
+            and up_bid > 0
+        )
+        post_down = (
+            not self._is_paused_down
+            and summary.down_shares < self.farm_max_shares
+            and (now - last_down_post_at) >= REQUOTE_INTERVAL_S
+            and down_bid > 0
+        )
 
-        if post_down and summary.down_shares < self.farm_max_shares:
-            if (now - last_down_post_at) >= FARM_REFRESH_S:
-                await self._post_ladder(
-                    market.no_token_id, "DOWN", no_ask, yes_ask,
-                    active_orders, summary
-                )
+        if post_up:
+            await self._requote_side(
+                "UP", market.yes_token_id, up_bid, down_bid, active_orders, summary
+            )
+        if post_down:
+            await self._requote_side(
+                "DOWN", market.no_token_id, down_bid, up_bid, active_orders, summary
+            )
 
-
-    def _build_tight_ladder(self, best_ask: float, other_ask: float) -> list:
-        """Rungs just below our best ask that still clear the combined gate.
-
-        We bid into the touch (one tick below best_ask, then a few ticks down)
-        rather than spanning the whole 0.10–0.80 range. Every rung is checked
-        against the LIVE opposite ask so the pair can never sum to the gate —
-        this is the absolute, fill-by-fill version of the cost gate.
-        """
-        rungs: list = []
-        top = round(best_ask - TICK_SIZE, 2)
-        for i in range(TIGHT_LADDER_RUNGS):
-            price = round(top - i * TIGHT_LADDER_STEP, 2)
-            if price <= 0.0:
-                break
-            # Absolute per-rung gate vs the live opposite ask.
-            if round(price + other_ask, 4) > MAX_COMBINED_COST_GATE:
-                continue
-            rungs.append(price)
-        return rungs
-
-    async def _post_ladder(
+    async def _requote_side(
         self,
-        token_id: str,
         side: str,
-        best_ask: float,
-        other_ask: float,
+        token_id: str,
+        my_target: float,
+        other_target: float,
         active_orders: Dict[str, OrderRecord],
         summary: WindowFillSummary,
     ) -> None:
-        """Post a few tight rungs just below our best ask, gated on the live touch."""
-        rungs = self._build_tight_ladder(best_ask, other_ask)
-        placed = 0
-        for price in rungs:
-            result = await self._post_ladder_rung(
-                token_id, side, price, other_ask, active_orders, summary
-            )
-            if result:
-                placed += 1
-            await asyncio.sleep(0.08)   # 80ms between rungs to avoid 425 rate-limits
+        """Re-quote one side: keep a well-priced resting bid, else cancel+repost.
 
-        self.logger.debug(
-            "Tight ladder posted: %s %s | %d/%d rungs (ask=%.2f, other_ask=%.2f)",
-            side, summary.market_id[:12], placed, len(rungs), best_ask, other_ask
+        The bid is additionally capped against the OTHER side's *actual* resting
+        price (not just this cycle's target) so a completed pair can never exceed
+        TARGET_COMBINED, even when the kept order is a touch stale.
+        """
+        other_side = "DOWN" if side == "UP" else "UP"
+        other_resting = max(
+            (o.price for o in active_orders.values() if o.side == other_side),
+            default=None,
         )
+        budget_used = other_resting if other_resting is not None else other_target
 
-    async def _post_ladder_rung(
+        # Hard budget guarantee: my bid + the other leg <= TARGET_COMBINED.
+        my_bid = round(min(my_target, TARGET_COMBINED - budget_used), 2)
+        if my_bid <= 0:
+            return
+
+        # Re-quote discipline: keep the resting order if still well-priced
+        # (preserving queue position); otherwise cancel and post fresh.
+        existing = [(oid, o) for oid, o in list(active_orders.items()) if o.side == side]
+        if any(abs(o.price - my_bid) <= STALE_DRIFT for _, o in existing):
+            return
+        for oid, _ in existing:
+            await self._cancel_order(oid, active_orders)
+
+        await self._post_quote(token_id, side, my_bid, active_orders, summary)
+
+    async def _post_quote(
         self,
         token_id: str,
         side: str,
         price: float,
-        other_ask: float,
         active_orders: Dict[str, OrderRecord],
         summary: WindowFillSummary,
     ) -> bool:
-        """Post a single GTC limit order at one rung with an absolute per-rung gate."""
-
-        # Absolute per-rung pre-check: this rung's fill price plus the price the
-        # OTHER leg would fill at (its live best ask) must clear the gate. This
-        # fires on every post, with or without existing fills — so we never
-        # complete a pair above the gate.
-        if round(price + other_ask, 4) > MAX_COMBINED_COST_GATE:
-            return False  # skip this rung — completing the pair would be too expensive
-
-        # Skip if already covered
-        for o in list(active_orders.values()):
-            if o.side == side and abs(o.price - price) < 0.03:
-                return False
-
+        """Post a single resting GTC maker bid at `price`."""
         shares = self._dollar_target_shares(price)
 
         if self.dry_run:
@@ -553,21 +532,18 @@ class MakerLoop:
                 order_id=order_id, side=side, token_id=token_id,
                 price=price, shares=shares, placed_at=time.time(),
             )
+            self.logger.debug(
+                "Maker quote: %s %s @ $%.2f x%d", side, summary.market_id[:12], price, shares
+            )
             return True
         except Exception as e:
-            self.logger.debug("Ladder rung error %s $%.2f: %s", side, price, e)
+            self.logger.debug("Maker quote error %s $%.2f: %s", side, price, e)
             return False
 
 
     # =========================================================================
     # Order management
     # =========================================================================
-
-    async def _cancel_stale(self, active_orders: Dict[str, OrderRecord]) -> None:
-        now = time.time()
-        stale = [oid for oid, o in list(active_orders.items()) if now - o.placed_at > MAX_ORDER_AGE_S]
-        for oid in stale:
-            await self._cancel_order(oid, active_orders)
 
     async def _cancel_all(self, active_orders: Dict[str, OrderRecord]) -> None:
         for oid in list(active_orders.keys()):
