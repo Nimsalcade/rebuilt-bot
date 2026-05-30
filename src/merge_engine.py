@@ -179,7 +179,6 @@ class MergeEngine:
         CLOB slippage.
         """
         import asyncio
-        from polymarket import AsyncSecureClient, BuilderApiKey
 
         async def _do_merge():
             current_amount = amount

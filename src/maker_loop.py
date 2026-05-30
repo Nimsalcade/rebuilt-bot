@@ -139,7 +139,7 @@ class WindowFillSummary:
         return None
 
     def __str__(self) -> str:
-        return terminal_ui.format_window_summary(self)
+        return f"WindowFillSummary(UP: {self.up_shares}@{self.up_avg_cost:.3f}, DOWN: {self.down_shares}@{self.down_avg_cost:.3f})"
 
 
 # ============================================================================
