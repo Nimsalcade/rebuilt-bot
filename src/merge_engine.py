@@ -152,9 +152,9 @@ class MergeEngine:
                 self._total_merged_usdc += result.usdc_returned
                 self._total_merge_count += 1
                 
-                # Instantly credit the merged USDC to the wallet balance cache to unthrottle redeployment
-                if getattr(self.bot, '_cached_balance_micro', None) is not None:
-                    self.bot._cached_balance_micro += int(result.usdc_returned * 1_000_000)
+                # Instantly credit the merged USDC to the pending proceeds accumulator to unthrottle redeployment
+                if hasattr(self.bot, 'pending_merge_proceeds'):
+                    self.bot.pending_merge_proceeds += result.usdc_returned
                     
                 print(terminal_ui.fmt_merge(summary.market_id, result.merged_shares, result.usdc_returned), flush=True)
             else:

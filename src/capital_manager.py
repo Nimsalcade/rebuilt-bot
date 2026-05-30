@@ -44,9 +44,12 @@ class CapitalManager:
         self.logger = logger or logging.getLogger("capital_manager")
 
         self.total_merged_returns = 0.0
-        self.total_redeemed_returns = 0.0
         self.gross_spent_resolved = 0.0
         self.windows_resolved = 0
+        
+        # Initialize pending merge proceeds on the bot so MergeEngine can update it
+        if not hasattr(self.bot, 'pending_merge_proceeds'):
+            self.bot.pending_merge_proceeds = 0.0
 
         self.logger.info(
             "CapitalManager ready | initial_deposit=$%.2f | auto_compound=%.0f%%",
@@ -61,11 +64,10 @@ class CapitalManager:
             return self.starting_deposit
 
         try:
-            # The bot caches balance for 30s, but merge_engine force-credits it
-            raw = await asyncio.to_thread(self.bot._refresh_balance)
-            if raw is None:
-                return self.starting_deposit # fallback
-            return raw / 1_000_000
+            # We fetch the cached balance directly, plus any un-settled merge proceeds
+            raw = getattr(self.bot, '_cached_balance_micro', self.starting_deposit * 1_000_000)
+            pending = getattr(self.bot, 'pending_merge_proceeds', 0.0)
+            return (raw / 1_000_000) + pending
         except Exception as exc:
             self.logger.warning("Balance read failed: %s", exc)
             return self.starting_deposit
@@ -76,9 +78,10 @@ class CapitalManager:
         self.total_merged_returns += merged_returned
         self.windows_resolved += 1
 
-    def record_redemption(self, redeemed_amount: float) -> None:
+    def record_redemption(self, redeemed_amount: float, naked_cost_basis: float) -> None:
         """Called when auto_redeem successfully claims a winning ticket."""
         self.total_redeemed_returns += redeemed_amount
+        self.gross_spent_resolved += naked_cost_basis
 
     def check_stop_loss(self) -> bool:
         """

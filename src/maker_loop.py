@@ -114,6 +114,14 @@ class WindowFillSummary:
         return self.up_total_cost + self.down_total_cost
 
     @property
+    def merged_usdc_cost_basis(self) -> float:
+        return self.merged_usdc * (self.up_avg_cost + self.down_avg_cost)
+        
+    @property
+    def naked_cost_basis(self) -> float:
+        return self.total_invested - self.merged_usdc_cost_basis
+
+    @property
     def lean_direction(self) -> Optional[str]:
         if self.up_shares > self.down_shares:
             return "UP"

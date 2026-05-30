@@ -212,9 +212,9 @@ class WindowManager:
                     summary = session.task.result()
                     session.summary = summary
                     if summary:
-                        # Report to CapitalManager for Realized PnL tracking
+                        # Report to CapitalManager for Realized PnL tracking (Merged portion only)
                         self.capital_mgr.record_window_resolution(
-                            gross_spent=summary.total_invested,
+                            gross_spent=summary.merged_usdc_cost_basis,
                             merged_returned=summary.merged_usdc
                         )
                         if self.paper_trader:

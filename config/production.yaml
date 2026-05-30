@@ -28,7 +28,7 @@ gabagool:
   target_assets:
     - BTC
     - ETH
-  max_concurrent_arbitrages: 6    # 6 windows at a time (matching gabagool22 exactly)
+  max_concurrent_arbitrages: 2    # 2 windows at a time for initial recycle proof
   max_position_per_market: 500.0  # $500 per window
   max_total_exposure: 1000.0
   holding_time_limit: 1800
