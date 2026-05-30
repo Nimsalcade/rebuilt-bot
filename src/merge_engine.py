@@ -182,18 +182,26 @@ class MergeEngine:
                 try:
                     self.logger.info("⛽ Initiating GASLESS on-chain merge via Relayer SDK...")
                     
-                    from py_builder_relayer_client.client import RelayClient
+                    from py_builder_relayer_client.client import RelayClient, RelayerTxType
+                    from py_builder_signing_sdk.config import BuilderConfig, BuilderApiKeyCreds
                     
                     # Ensure amount is in base units (6 decimals for USDC collateral)
                     merge_arg = int(float(current_amount) * 1_000_000)
 
-                    # Initialize the RelayClient using the user's config
+                    # Initialize the RelayClient using the actual v0.0.2 parameters
+                    creds = BuilderApiKeyCreds(
+                        key=self.bot.config.builder_api_key,
+                        secret=self.bot.config.builder_api_secret,
+                        passphrase=self.bot.config.builder_api_passphrase
+                    )
+                    builder_config = BuilderConfig(local_builder_creds=creds)
+
                     client = RelayClient(
-                        host="https://relayer-v2.polymarket.com",
-                        chain=137,
-                        signer=self.bot.config.private_key,
-                        relayer_api_key=self.bot.config.builder_api_key,
-                        relayer_api_key_address=self.bot.config.safe_address,
+                        relayer_url="https://relayer-v2.polymarket.com",
+                        chain_id=137,
+                        private_key=self.bot.config.private_key,
+                        builder_config=builder_config,
+                        relay_tx_type=RelayerTxType.SAFE
                     )
                     
                     # CTF Address for standard markets, NegRiskAdapter for neg risk
