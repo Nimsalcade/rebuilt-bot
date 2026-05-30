@@ -1,0 +1,98 @@
+# Gabagool Bot - Default Configuration
+# Version: 1.0
+# Created: 2026-01-26
+#
+# This file contains default configuration values.
+# Override in production.yaml or via environment variables.
+#
+# Environment variables (prefix POLY_) take precedence over YAML:
+#   POLY_SAFE_ADDRESS, POLY_PRIVATE_KEY, POLY_RPC_URL, POLY_DRY_RUN
+
+# =============================================================================
+# WALLET CONFIGURATION
+# =============================================================================
+
+# Polymarket Safe/Proxy wallet address
+# Override with: POLY_SAFE_ADDRESS
+safe_address: ""
+
+# Polygon RPC URL (public default, use private for production)
+# Override with: POLY_RPC_URL
+rpc_url: "https://polygon-rpc.com"
+
+# =============================================================================
+# CLOB API CONFIGURATION
+# =============================================================================
+
+clob:
+  host: "https://clob.polymarket.com"
+  chain_id: 137               # Polygon mainnet
+  # Polymarket signature type for the funder address:
+  #   0 = EOA            (signing wallet IS the funder)
+  #   1 = POLY_PROXY     (Polymarket Proxy wallet, EIP-1167 minimal proxy — most accounts)
+  #   2 = POLY_GNOSIS_SAFE (Gnosis Safe, owners returned by getOwners())
+  # If unsure: query funder bytecode on-chain. ~45-byte EIP-1167 = type 1; full Safe = type 2.
+  signature_type: 3
+
+# =============================================================================
+# GABAGOOL STRATEGY CONFIGURATION
+# =============================================================================
+
+gabagool:
+  # Entry thresholds - buy when price below these values
+  yes_buy_threshold: 0.48     # Buy YES if price below (range: 0.40-0.52)
+  no_buy_threshold: 0.48      # Buy NO if price below (range: 0.40-0.52)
+
+  # Profit requirements
+  max_combined_cost: 0.97     # Max total cost for YES + NO (range: 0.95-0.98)
+  min_profit_margin: 0.02     # Minimum profit margin to enter (range: 0.02-0.05)
+
+  # Position limits (adjust based on capital)
+  max_position_per_market: 5.0      # Max USD per market (LOW FOR TESTING)
+  max_total_exposure: 15.0          # Max total USD exposure
+  max_concurrent_arbitrages: 3      # Max simultaneous positions
+  max_unpaired_exposure: 5.0        # Max USD in incomplete pairs
+
+  # Time limits
+  holding_time_limit: 1800          # Max holding time in seconds (30 min)
+  min_time_to_resolution: 120       # Don't enter within 2 min of expiry
+  redeem_check_interval: 300        # Settlement check interval (5 min)
+
+  # Circuit breakers
+  max_consecutive_failures: 3       # Pause after N failed transactions
+  max_daily_drawdown_pct: 0.15      # Stop if down 15% in a day
+  min_wallet_balance: 10.0          # Stop if wallet below this USD
+
+  # Target markets
+  target_assets:
+    - BTC
+    - ETH
+  # Multi-duration windows (matching gabagool22's strategy):
+  #   5-minute:  76% of volume (primary timeframe)
+  #   15-minute: secondary
+  #   1-hour:    24% of volume
+  # Discovery scans ALL durations automatically.
+
+
+
+# =============================================================================
+# PATHS
+# =============================================================================
+
+data_dir: "data"
+log_dir: "logs"
+db_path: "data/gabagool.db"
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+log_level: "INFO"             # DEBUG, INFO, WARNING, ERROR
+
+# =============================================================================
+# MODE
+# =============================================================================
+
+# Run in simulation mode (no real trades)
+# Override with: POLY_DRY_RUN=true
+dry_run: false

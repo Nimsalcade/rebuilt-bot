@@ -1,0 +1,125 @@
+# Lynx Bot - Git Ignore
+
+# =============================================================================
+# Personal / Sensitive Files (NEVER COMMIT)
+# =============================================================================
+*.csv
+.envrc
+gobogoo22.txt
+*.txt
+!requirements*.txt
+
+# macOS extended attribute files
+._*
+.DS_Store
+Thumbs.db
+
+# Personal analysis / old naming
+config/analyze_g22.py
+config/history.pretty.json
+docs/gabagool-master-plan.md
+
+
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =============================================================================
+# Virtual environments
+# =============================================================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# IDE
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# =============================================================================
+# Data and Secrets (NEVER COMMIT)
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+data/
+logs/
+*.log
+
+# API credentials
+*_creds.json
+api_creds.json
+credentials.json
+
+# Environment files with secrets
+.env
+!config/.env.example
+
+# Private keys (CRITICAL - never commit)
+*.pem
+*.key
+private_key*
+
+# =============================================================================
+# Sample/Reference Repositories
+# =============================================================================
+# These are cloned repos for reference, not part of this project
+samples/
+
+# =============================================================================
+# OS files
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.temp
+
+# =============================================================================
+# Testing
+# =============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# =============================================================================
+# Jupyter
+# =============================================================================
+.ipynb_checkpoints/

@@ -1,0 +1,102 @@
+{
+  "description": "Polymarket 15-minute updown prediction markets",
+  "discovered_at": "2026-01-27T01:45:00Z",
+  "source": "Direct API testing via gamma-api.polymarket.com",
+  "confirmed_assets": [
+    {
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "type": "crypto",
+      "slug_prefix": "btc-updown-15m",
+      "timeframes": [
+        "15m",
+        "4h"
+      ],
+      "verified": true
+    },
+    {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "type": "crypto",
+      "slug_prefix": "eth-updown-15m",
+      "timeframes": [
+        "15m",
+        "4h"
+      ],
+      "verified": true
+    },
+    {
+      "symbol": "SOL",
+      "name": "Solana",
+      "type": "crypto",
+      "slug_prefix": "sol-updown-15m",
+      "timeframes": [
+        "15m",
+        "4h"
+      ],
+      "verified": true
+    },
+    {
+      "symbol": "XRP",
+      "name": "Ripple",
+      "type": "crypto",
+      "slug_prefix": "xrp-updown-15m",
+      "timeframes": [
+        "15m",
+        "4h"
+      ],
+      "verified": true
+    },
+    {
+      "symbol": "MSTR",
+      "name": "MicroStrategy",
+      "type": "stock",
+      "slug_prefix": "mstr-updown-15m",
+      "timeframes": [
+        "15m"
+      ],
+      "verified": false,
+      "note": "Stock that tracks BTC. Slug pattern unconfirmed - may need discovery."
+    }
+  ],
+  "unconfirmed_assets": [
+    {
+      "symbol": "DOGE",
+      "name": "Dogecoin",
+      "type": "crypto",
+      "note": "Reported to exist but not found via API - may use different slug pattern"
+    }
+  ],
+  "market_info": {
+    "slug_pattern": "{symbol}-updown-{timeframe}-{unix_timestamp}",
+    "timeframes": {
+      "15m": {
+        "description": "15-minute windows",
+        "schedule": "Every 15 minutes at :00, :15, :30, :45 UTC",
+        "duration_seconds": 900
+      },
+      "4h": {
+        "description": "4-hour windows",
+        "schedule": "Every 4 hours at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC",
+        "duration_seconds": 14400
+      }
+    },
+    "resolution": "UP wins if close price > open price, DOWN wins otherwise",
+    "typical_spread": "1-2% during active trading, widens near resolution"
+  },
+  "examples": {
+    "btc_15m": "btc-updown-15m-1769478300",
+    "eth_4h": "eth-updown-4h-1769475600"
+  },
+  "gabagool_config": {
+    "supported_symbols": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "XRP",
+      "MSTR"
+    ],
+    "default_timeframe": "15m",
+    "scan_interval_seconds": 10
+  }
+}

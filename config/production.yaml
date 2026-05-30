@@ -1,0 +1,57 @@
+# Gabagool Bot - Production Configuration
+# Version: 2.0 (Pure Spread Arbitrage)
+# Created: 2026-05-29
+
+# =============================================================================
+# WALLET CONFIGURATION
+# =============================================================================
+
+# These MUST be set via environment variables for security:
+#   POLY_SAFE_ADDRESS - Your Polymarket Safe/Proxy wallet address
+#   POLY_PRIVATE_KEY - Your EOA private key (never commit!)
+
+# =============================================================================
+# GABAGOOL STRATEGY - PRODUCTION (PURE SPREAD)
+# =============================================================================
+
+gabagool:
+  # CHANGE: was 1.0 — causes stop-loss on every losing cycle
+  auto_compound_pct: 0.0
+
+  # KEEP: fixed session capital
+  session_capital_usd: 1000.0
+
+  # CHANGE: was 0.96 — lower to match gabagool22's observed combined avg of 0.965
+  max_combined_cost: 0.97
+
+  # KEEP:
+  target_assets:
+    - BTC
+    - ETH
+  max_concurrent_arbitrages: 2    # 2 windows at a time for initial recycle proof
+  max_position_per_market: 500.0  # $500 per window
+  max_total_exposure: 1000.0
+  holding_time_limit: 1800
+  min_time_to_resolution: 60
+  max_daily_drawdown_pct: 0.15
+  min_wallet_balance: 10.0
+
+# =============================================================================
+# PATHS - PRODUCTION
+# =============================================================================
+
+data_dir: "data"
+log_dir: "logs"
+db_path: "data/gabagool_prod.db"
+
+# =============================================================================
+# LOGGING - PRODUCTION
+# =============================================================================
+
+log_level: "INFO"
+
+# =============================================================================
+# MODE
+# =============================================================================
+
+dry_run: false
