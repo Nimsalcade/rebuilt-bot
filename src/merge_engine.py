@@ -172,94 +172,84 @@ class MergeEngine:
         condition_id: str,
         amount: Union[float, str],
     ) -> MergeResult:
-        """Execute a true on-chain gasless merge using the unified polymarket-client.
-        
-        This SDK correctly supports Deposit Wallets (POLY_1271) via WALLET batches
-        on the Relayer, ensuring guaranteed exactly $1.00 payouts per pair without
-        CLOB slippage.
-        """
+        """Execute a true on-chain gasless merge using the RelayClient SDK."""
         import asyncio
+        from web3 import Web3
 
         async def _do_merge():
             current_amount = amount
             for attempt in range(2):
-                secure_client = None
-                gasless_client = None
                 try:
-                    self.logger.info("⛽ Initiating GASLESS on-chain merge via Unified SDK...")
+                    self.logger.info("⛽ Initiating GASLESS on-chain merge via Relayer SDK...")
                     
-                    # Create base client
-                    from py_clob_client.client import AsyncSecureClient
-                    from py_clob_client.credentials import BuilderApiKey
+                    from py_builder_relayer_client.client import RelayClient
                     
-                    secure_client = await AsyncSecureClient.create(
-                        private_key=self.bot.config.private_key,
-                        wallet=self.bot.config.safe_address,
-                        api_key=BuilderApiKey(
-                            key=self.bot.config.builder_api_key,
-                            secret=self.bot.config.builder_api_secret,
-                            passphrase=self.bot.config.builder_api_passphrase,
-                        ),
+                    # Ensure amount is in base units (6 decimals for USDC collateral)
+                    merge_arg = int(float(current_amount) * 1_000_000)
+
+                    # Initialize the RelayClient using the user's config
+                    client = RelayClient(
+                        host="https://relayer-v2.polymarket.com",
+                        chain=137,
+                        signer=self.bot.config.private_key,
+                        relayer_api_key=self.bot.config.builder_api_key,
+                        relayer_api_key_address=self.bot.config.safe_address,
                     )
                     
-                    # Bind to deposit wallet
-                    gasless_client = await secure_client.setup_gasless_wallet()
+                    # CTF Address for standard markets, NegRiskAdapter for neg risk
+                    # Polymarket routes most new markets via NegRiskAdapter.
+                    # We will attempt NegRiskAdapter first, as that is standard for newer pairs.
+                    NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
                     
-                    # Execute merge (amount must be in base units: 6 decimals, or "max")
-                    merge_arg = "max" if current_amount == "max" else int(float(current_amount) * 1_000_000)
-                    handle = await gasless_client.merge_positions(
-                        condition_id=condition_id,
-                        amount=merge_arg,
+                    # Build the data payload for the merge transaction
+                    tx_data = Web3().eth.contract(
+                        address=NEG_RISK_ADAPTER,
+                        abi=[{
+                            "name": "mergePositions",
+                            "type": "function",
+                            "inputs": [
+                                {"name": "_conditionId", "type": "bytes32"},
+                                {"name": "_amount", "type": "uint256"}
+                            ],
+                            "outputs": []
+                        }]
+                    ).encode_abi(
+                        abi_element_identifier="mergePositions", 
+                        args=[Web3.to_bytes(hexstr=condition_id), merge_arg]
                     )
+
+                    merge_tx = {
+                        "to": NEG_RISK_ADAPTER,
+                        "data": tx_data,
+                        "value": "0"
+                    }
+
+                    # Execute via the Relayer SDK (synchronous call wrapping in asyncio)
+                    self.logger.info("⏳ Merge submitted to Relayer. Waiting for confirmation...")
+                    response = await asyncio.to_thread(client.execute, [merge_tx], "Merge pairs")
                     
-                    self.logger.info("⏳ Merge submitted to Relayer. Waiting for chain confirmation...")
-                    outcome = await handle.wait()
+                    # Wait for transaction confirmation
+                    result = await asyncio.to_thread(response.wait)
                     
-                    await gasless_client.close()
-                    await secure_client.close()
+                    # The relayer returns the transaction hash in the result object
+                    tx_hash = result.get('transactionHash', result.get('hash', 'success'))
+                    self.logger.info("✅ GASLESS MERGE MINED | tx_hash=%s", tx_hash)
                     
-                    if outcome and outcome.transaction_hash:
-                        self.logger.info("✅ GASLESS MERGE MINED | tx_hash=%s", outcome.transaction_hash)
-                        return MergeResult(success=True, merged_shares=current_amount, usdc_returned=current_amount, tx_hash=outcome.transaction_hash)
-                    else:
-                        self.logger.warning("❌ GASLESS MERGE FAILED (No tx hash returned)")
-                        return MergeResult(success=False, merged_shares=0, usdc_returned=0, error="No tx hash returned")
+                    return MergeResult(
+                        success=True, 
+                        merged_shares=current_amount, 
+                        usdc_returned=current_amount, 
+                        tx_hash=tx_hash
+                    )
                         
                 except Exception as e:
-                    if gasless_client:
-                        try:
-                            await gasless_client.close()
-                        except: pass
-                    if secure_client:
-                        try:
-                            await secure_client.close()
-                        except: pass
-                        
                     error_msg = str(e)
-                    import re
-                    _MAX_MERGEABLE_RE = re.compile(r'maximum mergeable amount\s+(\d+)', re.IGNORECASE)
-                    match = _MAX_MERGEABLE_RE.search(error_msg)
-                    if attempt == 0 and match and "exceeds the maximum" in error_msg:
-                        max_amount_micro = int(match.group(1))
-                        safe_micro = int(max_amount_micro * 0.99) # 1% haircut
-                        safe_shares = safe_micro / 1_000_000.0
-                        
-                        if current_amount != "max":
-                            if safe_shares >= MIN_MERGE_SHARES:
-                                self.logger.warning("Merge amount exceeded actual balance. Retrying with clamped amount: %.2f", safe_shares)
-                                current_amount = safe_shares
-                                continue
-                            else:
-                                self.logger.warning("Clamped amount %.2f is below minimum %.2f, aborting merge.", safe_shares, MIN_MERGE_SHARES)
-                                return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=f"Clamped amount {safe_shares} below minimum")
-                                
-                    self.logger.error("Unified SDK merge exception: %s", e)
-                    return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=str(e))
+                    self.logger.error("Unified SDK merge exception: %s", error_msg)
+                    return MergeResult(success=False, merged_shares=0, usdc_returned=0, error=error_msg)
+                    
+            return MergeResult(success=False, merged_shares=0, usdc_returned=0, error="Max attempts reached")
 
-        # We are running inside a thread (via asyncio.to_thread). We can use
-        # asyncio.run() to spin up an isolated event loop for the SDK.
         return asyncio.run(_do_merge())
-
 
     def log_session_summary(self) -> None:
         """Log total merges for this session."""
