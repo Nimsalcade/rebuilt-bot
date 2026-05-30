@@ -218,7 +218,7 @@ class WindowManager:
                             merged_returned=summary.merged_usdc
                         )
                         if self.paper_trader:
-                            self.paper_trader.record_window_close(summary)
+                            self.paper_trader.queue_for_settlement(summary)
                 except asyncio.CancelledError:
                     self.logger.info("Session %s was cancelled", mid[:16])
                 except Exception as e:
