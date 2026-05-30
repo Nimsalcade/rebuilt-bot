@@ -607,7 +607,7 @@ class MakerLoop:
                 side=order.side,
                 price=order.price,
                 shares=order.shares,
-                is_snipe=False,
+                cost=order.price * order.shares,
             ), flush=True)
 
     def _log_status(self, summary: WindowFillSummary, elapsed: float, state: LoopState):
