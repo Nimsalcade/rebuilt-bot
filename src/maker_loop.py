@@ -169,6 +169,9 @@ class MakerLoop:
         self.window_capital_cap    = window_capital_cap
         self.logger                = logging.getLogger("maker_loop")
         self._cost_gate_logged_for_window: set = set()
+        
+        self._is_paused_up = False
+        self._is_paused_down = False
 
         self.merge_engine = MergeEngine(bot=bot, dry_run=dry_run)
 
@@ -383,25 +386,38 @@ class MakerLoop:
         if capital_at_work >= self.window_capital_cap:
             return
 
-        # NEW: Inventory Balance Cap (Max Lean)
+        # NEW: Inventory Balance Cap (Max Lean) with Hysteresis
         # Prevent accumulating a massive directional position by halting the heavy side
         # and actively cancelling its resting orders to prevent soft-cap leakage.
-        post_up = True
-        post_down = True
         
-        if summary.up_shares > summary.down_shares * 1.10 and (summary.up_shares - summary.down_shares) > 10.0:
-            post_up = False
+        up, dn = summary.up_shares, summary.down_shares
+        lean_up = (up - dn) / max(up, dn, 1)
+        lean_dn = (dn - up) / max(up, dn, 1)
+        
+        # Enter pause on the upper threshold
+        if not self._is_paused_up and lean_up > 0.15 and (up - dn) > 10.0:
+            self._is_paused_up = True
             # Actively cancel resting UP orders to stop the bleed
             for oid, o in list(active_orders.items()):
                 if o.side == "UP":
                     await self._cancel_order(oid, active_orders)
                     
-        elif summary.down_shares > summary.up_shares * 1.10 and (summary.down_shares - summary.up_shares) > 10.0:
-            post_down = False
+        if not self._is_paused_down and lean_dn > 0.15 and (dn - up) > 10.0:
+            self._is_paused_down = True
             # Actively cancel resting DOWN orders to stop the bleed
             for oid, o in list(active_orders.items()):
                 if o.side == "DOWN":
                     await self._cancel_order(oid, active_orders)
+
+        # Exit pause only on the lower threshold
+        if self._is_paused_up and lean_up < 0.06:
+            self._is_paused_up = False
+            
+        if self._is_paused_down and lean_dn < 0.06:
+            self._is_paused_down = False
+
+        post_up = not self._is_paused_up
+        post_down = not self._is_paused_down
 
         if post_up and summary.up_shares < self.farm_max_shares:
             if (now - last_up_post_at) >= FARM_REFRESH_S:
