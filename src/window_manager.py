@@ -4,11 +4,12 @@ Gabagool Bot - Window Manager (Multi-Window Lifecycle Orchestration)
 
 Purpose:
     Discovers active 15-minute windows for BTC/ETH/SOL and manages
-    concurrent MakerLoop sessions. Handles window open detection,
-    concurrent session limits, and graceful shutdown for pure spread arbitrage.
+    concurrent MakerLoop sessions. Implements continuous overlapping flow,
+    dynamically allocating available capital across concurrent windows
+    without waiting for settlement.
 
 Author: AI-Generated
-Created: 2026-05-29
+Created: 2026-05-30
 """
 
 import asyncio
@@ -23,13 +24,9 @@ from .capital_manager import CapitalManager
 
 
 # How often to scan for new windows (seconds)
-DISCOVERY_INTERVAL_S = 30
+DISCOVERY_INTERVAL_S = 15
 
-# How many seconds after a window opens to start the maker loop
-WINDOW_START_DELAY_S = 30
-
-# Max concurrent active sessions across all assets
-MAX_CONCURRENT_SESSIONS = 6
+# Max concurrent 1h sessions to avoid concentrating risk
 MAX_1H_SESSIONS = 1
 
 
@@ -54,14 +51,13 @@ class WindowSession:
 
 class WindowManager:
     """
-    Discovers and manages concurrent 15-minute window sessions.
+    Discovers and manages continuous overlapping 15-minute window sessions.
 
     Lifecycle per window:
     1. Gamma API signals window is open and accepting orders
-    2. WindowManager waits WINDOW_START_DELAY_S seconds
-    3. Starts MakerLoop (FARMING) as a task
-    4. MakerLoop runs until window closes (~14.5 min mark)
-    5. Session is cleaned up, results queued for paper settlement
+    2. Starts MakerLoop (FARMING) as a task
+    3. MakerLoop runs until window closes (~14.5 min mark)
+    4. Session is cleaned up, gross spent and merged returns recorded to CapitalManager
     """
 
     def __init__(
@@ -88,73 +84,58 @@ class WindowManager:
         self._sessions: Dict[str, WindowSession] = {}
         self._seen_market_ids: Set[str] = set()
         self.running = False
-        self.completed_windows: list = []
 
-        # ── Capital Manager ───────────────────────────────────────────────────
+        # ── Capital Manager (Continuous) ───────────────────────────────────────
         gabagool_cfg = getattr(config, 'gabagool', config)
-        session_capital = getattr(gabagool_cfg, 'session_capital_usd', 200.0)
+        session_capital = getattr(gabagool_cfg, 'session_capital_usd', 1000.0)
         auto_compound = getattr(gabagool_cfg, 'auto_compound_pct', 0.0)
         
-        self._capital_mgr = CapitalManager(
+        self.capital_mgr = CapitalManager(
             bot=bot,
             session_capital_usd=session_capital,
             auto_compound_pct=auto_compound,
             logger=logging.getLogger("capital_manager"),
             paper_trader=self.paper_trader,
         )
+        self.window_capital_cap = 0.0
 
     # =========================================================================
-    # Main Loop
+    # Main Loop (Continuous Flow)
     # =========================================================================
 
     async def run_forever(self) -> None:
         self.running = True
         gabagool_cfg  = self.config.gabagool if hasattr(self.config, 'gabagool') else self.config
         target_assets = getattr(gabagool_cfg, 'target_assets', ['BTC', 'ETH', 'SOL'])
+        
+        # Concurrency limit pulls from config
+        max_concurrent = max(1, getattr(gabagool_cfg, 'max_concurrent_arbitrages', 2))
 
         self.logger.info(
-            "WindowManager starting | assets=%s | dry_run=%s",
-            target_assets, self.dry_run
+            "WindowManager starting | assets=%s | max_concurrent=%d | dry_run=%s",
+            target_assets, max_concurrent, self.dry_run
         )
 
         try:
             while self.running:
-                # 1. Capital Manager Phase — wait for settlement, enforce cycle limits
-                ok = await self._capital_mgr.start_cycle()
+                # 1. Update live balance and check global Stop-Loss
+                available_balance = await self.capital_mgr.get_available_balance()
+                ok = self.capital_mgr.check_stop_loss()
                 if not ok:
-                    self.logger.warning("CapitalManager blocked cycle start — stopping")
+                    self.logger.warning("CapitalManager triggered Stop-Loss — stopping WindowManager")
                     break
 
-                # Update MakerLoop per-window capital limit
-                concurrent = max(1, getattr(gabagool_cfg, 'max_concurrent_arbitrages', 4))
-                self.window_capital_cap = self._capital_mgr.session_capital_usd / concurrent
+                # 2. Update soft capital cap per window (distribute available pool)
+                self.window_capital_cap = available_balance / max_concurrent
 
-                self.logger.info("Cycle started. Watching for windows...")
+                # 3. Clear dead sessions and record their resolved PnL
+                await self._cleanup_sessions()
 
-                cycle_active = True
-                while cycle_active and self.running:
-                    # Clear dead sessions
-                    await self._cleanup_sessions()
+                # 4. Discover new windows if we have room
+                if len(self._sessions) < max_concurrent:
+                    await self._discover_windows(target_assets, max_concurrent)
 
-                    # Find new windows
-                    if len(self._sessions) < MAX_CONCURRENT_SESSIONS:
-                        await self._discover_windows(target_assets)
-
-                    # Cycle ends when we have NO active sessions, BUT we must
-                    # ensure we actually traded something this cycle before advancing.
-                    # Simplified: if we have zero sessions, and we've already discovered some,
-                    # we can end the cycle. To prevent rapid-fire empty cycles, we'll
-                    # only break if we have no active sessions AND we've completed at least one.
-                    
-                    if not self._sessions and self.completed_windows:
-                        self.logger.info("All windows in cycle finished. Advancing to next cycle.")
-                        self.completed_windows.clear()
-                        cycle_active = False
-
-                    await asyncio.sleep(DISCOVERY_INTERVAL_S)
-
-                # End cycle — records P&L, sets up for settlement wait on next loop
-                await self._capital_mgr.end_cycle()
+                await asyncio.sleep(DISCOVERY_INTERVAL_S)
 
         except asyncio.CancelledError:
             self.logger.info("WindowManager cancelled")
@@ -163,7 +144,7 @@ class WindowManager:
         finally:
             await self._shutdown()
 
-    async def _discover_windows(self, assets: List[str]) -> None:
+    async def _discover_windows(self, assets: List[str], max_concurrent: int) -> None:
         """Query Gamma API for active windows on target assets."""
         try:
             markets = await asyncio.to_thread(self.gamma.get_all_active_markets, assets)
@@ -177,7 +158,7 @@ class WindowManager:
                 continue
 
             # Capacity checks
-            if len(self._sessions) >= MAX_CONCURRENT_SESSIONS:
+            if len(self._sessions) >= max_concurrent:
                 break
                 
             duration = (m.slug or m.id or "").lower()
@@ -189,8 +170,6 @@ class WindowManager:
                 if active_1h >= MAX_1H_SESSIONS:
                     continue
 
-
-
             self._seen_market_ids.add(m.id)
             self._start_session(m)
 
@@ -201,9 +180,6 @@ class WindowManager:
             market.id[:16], market.end_date.strftime("%H:%M:%S") if market.end_date else "N/A"
         )
 
-        gabagool_cfg = getattr(self.config, 'gabagool', self.config)
-
-        # Simplified initialization without sniper/spike_detector
         loop = MakerLoop(
             bot=self.bot,
             dry_run=self.dry_run,
@@ -227,7 +203,7 @@ class WindowManager:
         self._sessions[market.id] = WindowSession(market, task)
 
     async def _cleanup_sessions(self) -> None:
-        """Remove completed sessions and process their summaries."""
+        """Remove completed sessions and pass their final PnL stats to CapitalManager."""
         done_ids = []
         for mid, session in self._sessions.items():
             if session.task.done():
@@ -236,7 +212,11 @@ class WindowManager:
                     summary = session.task.result()
                     session.summary = summary
                     if summary:
-                        self.completed_windows.append(summary)
+                        # Report to CapitalManager for Realized PnL tracking
+                        self.capital_mgr.record_window_resolution(
+                            gross_spent=summary.total_invested,
+                            merged_returned=summary.merged_usdc
+                        )
                         if self.paper_trader:
                             self.paper_trader.record_window_close(summary)
                 except asyncio.CancelledError:

@@ -359,10 +359,11 @@ class MakerLoop:
                     self._cost_gate_logged_for_window.add(summary.market_id)
                 return  # stop posting
 
-        # Hard capital cap
+        # Hard capital cap (Capital at Work)
+        held_value = (summary.up_shares * summary.up_avg_cost + summary.down_shares * summary.down_avg_cost)
         locked_resting = sum(o.price * o.shares for o in list(active_orders.values()))
-        total_committed = summary.total_invested + locked_resting
-        if total_committed >= self.window_capital_cap:
+        capital_at_work = held_value + locked_resting
+        if capital_at_work >= self.window_capital_cap:
             return
 
         if summary.up_shares < self.farm_max_shares:
