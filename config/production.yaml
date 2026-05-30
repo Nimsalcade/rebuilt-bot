@@ -19,7 +19,7 @@ gabagool:
   auto_compound_pct: 0.0
 
   # KEEP: fixed session capital
-  session_capital_usd: 50.0
+  session_capital_usd: 30.0
 
   # CHANGE: was 0.96 — lower to match gabagool22's observed combined avg of 0.965
   max_combined_cost: 0.97
@@ -29,8 +29,8 @@ gabagool:
     - BTC
     - ETH
   max_concurrent_arbitrages: 2    # 2 windows at a time for initial recycle proof
-  max_position_per_market: 25.0  # $25 per window
-  max_total_exposure: 50.0
+  max_position_per_market: 15.0  # $15 per window
+  max_total_exposure: 30.0
   holding_time_limit: 1800
   min_time_to_resolution: 60
   max_daily_drawdown_pct: 0.15
