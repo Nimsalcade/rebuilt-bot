@@ -146,6 +146,75 @@ class GammaClient(ThreadLocalSessionMixin):
             self.logger.error("Error fetching market %s: %s", slug, e)
             return None
 
+    def get_resolution(self, condition_id: str) -> Optional[Dict[str, Any]]:
+        """Query resolution status and winning outcome for a market.
+
+        Looks the market up by condition_id and reports whether it has resolved
+        on-chain and, if so, which side won. The winner is read from
+        ``outcomePrices`` — at resolution the winning outcome settles to ~1.0
+        and the loser to ~0.0.
+
+        Returns:
+            ``{"resolved": bool, "winning_outcome": "UP" | "DOWN" | None}`` or
+            ``None`` if the market could not be fetched. ``winning_outcome`` is
+            only set once a side has clearly settled, so callers can treat a
+            ``None`` winner as "not yet decided" and avoid booking prematurely.
+        """
+        if not condition_id:
+            return None
+
+        url = f"{self.host}/markets"
+        try:
+            response = self.session.get(
+                url, params={"condition_id": condition_id}, timeout=self.timeout
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            markets = data if isinstance(data, list) else data.get("markets", [])
+            if not markets:
+                return None
+            market = markets[0]
+        except Exception as e:
+            self.logger.debug("Resolution lookup failed for %s: %s", condition_id, e)
+            return None
+
+        return {
+            "resolved": bool(market.get("resolved", False)),
+            "winning_outcome": self._winning_outcome(market),
+        }
+
+    @staticmethod
+    def _winning_outcome(market: Dict[str, Any]) -> Optional[str]:
+        """Derive the winning side ("UP"/"DOWN") from a resolved market's prices.
+
+        Returns None unless one outcome has clearly settled to a winner
+        (price >= 0.99), so an in-flight or ambiguous market is never reported
+        as decided.
+        """
+        prices = GammaClient._parse_json_field(market.get("outcomePrices", "[]"))
+        outcomes = GammaClient._parse_json_field(market.get("outcomes", '["Up", "Down"]'))
+
+        best_idx: Optional[int] = None
+        best_val = 0.0
+        for i, p in enumerate(prices):
+            try:
+                val = float(p)
+            except (ValueError, TypeError):
+                continue
+            if val > best_val:
+                best_val, best_idx = val, i
+
+        if best_idx is None or best_val < 0.99:
+            return None
+
+        label = str(outcomes[best_idx]).lower() if best_idx < len(outcomes) else ""
+        if label in ("up", "yes"):
+            return "UP"
+        if label in ("down", "no"):
+            return "DOWN"
+        return None
+
     def get_current_15m_market(self, coin: str) -> Optional[Dict[str, Any]]:
         """
         Get the current active 15-minute market for a coin.

@@ -44,6 +44,24 @@ from typing import Optional, List, Dict, Any
 import aiohttp
 
 
+def classify_naked_outcome(
+    naked_side: Optional[str], winning_outcome: Optional[str]
+) -> Optional[bool]:
+    """Decide whether a naked leg won, lost, or is still undecided.
+
+    Returns:
+        True  -> the naked side matches the winning outcome (won)
+        False -> the naked side is the losing outcome (lost)
+        None  -> outcome cannot be determined yet (don't book either way)
+
+    Kept as a pure function so the win/loss decision can be unit-tested without
+    any network access.
+    """
+    if not naked_side or not winning_outcome:
+        return None
+    return naked_side.upper() == winning_outcome.upper()
+
+
 class AutoRedeemer:
     """
     Automated position redemption service.
@@ -62,7 +80,9 @@ class AutoRedeemer:
         stats_tracker: Any = None,
         check_interval: int = 300,  # 5 minutes
         redeem_threshold_usd: float = 0.10,  # Minimum value to redeem
-        enabled: bool = True
+        enabled: bool = True,
+        capital_manager: Any = None,
+        gamma_client: Any = None,
     ):
         """
         Initialize auto-redeemer.
@@ -74,6 +94,12 @@ class AutoRedeemer:
             check_interval: Seconds between checks (default 300)
             redeem_threshold_usd: Minimum USD value to trigger redemption
             enabled: Whether auto-redemption is enabled
+            capital_manager: Optional CapitalManager — when provided, resolved
+                naked legs are booked into realized PnL (winners with payout,
+                losers with zero) so the stop-loss sees real losses.
+            gamma_client: Optional GammaClient — used to detect on-chain
+                resolution + winning outcome for losing legs (which never
+                appear in the Data API "redeemable" list).
         """
         self.wallet_address = wallet_address
         self.position_tracker = position_tracker
@@ -81,6 +107,8 @@ class AutoRedeemer:
         self.check_interval = check_interval
         self.redeem_threshold_usd = redeem_threshold_usd
         self.enabled = enabled
+        self.capital_manager = capital_manager
+        self.gamma_client = gamma_client
 
         self.logger = logging.getLogger("auto_redeemer")
         self.running = False
@@ -313,12 +341,16 @@ class AutoRedeemer:
 
         redeemable = await self.get_redeemable_positions()
         processed = 0
+        redeemable_condition_ids: set = set()
 
         for position in redeemable:
             try:
                 position_id = position.get("id", "")
                 value_usd = float(position.get("value", 0))
                 market_slug = position.get("slug", "unknown")
+                cid = position.get("conditionId", "")
+                if cid:
+                    redeemable_condition_ids.add(cid)
 
                 # Skip positions below threshold
                 if value_usd < self.redeem_threshold_usd:
@@ -343,6 +375,11 @@ class AutoRedeemer:
                 if success:
                     processed += 1
 
+                    # Book the WINNING naked leg into realized PnL: the actual
+                    # on-chain value claimed is the payout, paired with the cost
+                    # basis registered when the window closed.
+                    self._book_winning_leg(condition_id, value_usd)
+
                     # Update stats if tracker is available
                     if self.stats_tracker:
                         self.stats_tracker.update_trade_result(
@@ -362,7 +399,65 @@ class AutoRedeemer:
                 len(redeemable)
             )
 
+        # Book the LOSING naked legs: they never appear as "redeemable", so we
+        # detect their on-chain resolution separately and book the cost with a
+        # zero payout. Without this the stop-loss never sees losing inventory.
+        await self._book_resolved_losers(redeemable_condition_ids)
+
         return processed
+
+    def _book_winning_leg(self, condition_id: str, payout_usd: float) -> None:
+        """Book a successfully redeemed (winning) naked leg into realized PnL."""
+        if not self.capital_manager:
+            return
+        try:
+            self.capital_manager.record_naked_resolution(
+                condition_id, won=True, redeemed_payout=payout_usd
+            )
+        except Exception as e:
+            self.logger.error("Failed to book winning leg %s: %s", condition_id, e)
+
+    async def _book_resolved_losers(self, redeemable_condition_ids: set) -> None:
+        """Detect resolved-but-losing naked legs and book their cost basis.
+
+        Iterates the CapitalManager's open naked positions. For each one that is
+        NOT currently redeemable (winners are handled by the redeem path), we
+        check on-chain resolution via Gamma. If the market has resolved and the
+        naked side is the loser, we book the cost with a zero payout. Winners
+        that have resolved but are not yet redeemable, and markets that have not
+        resolved, are left pending and revisited next cycle.
+        """
+        if not self.capital_manager or not self.gamma_client:
+            return
+
+        try:
+            pending = self.capital_manager.pending_naked_positions()
+        except Exception as e:
+            self.logger.error("Could not read pending naked positions: %s", e)
+            return
+
+        for pos in list(pending):
+            cid = pos.condition_id
+            if not cid or cid in redeemable_condition_ids:
+                continue  # winner — handled by the redeem path above
+
+            try:
+                res = await asyncio.to_thread(self.gamma_client.get_resolution, cid)
+            except Exception as e:
+                self.logger.debug("Resolution check failed for %s: %s", cid, e)
+                continue
+
+            if not res or not res.get("resolved"):
+                continue  # not resolved yet — leave pending
+
+            outcome = classify_naked_outcome(pos.naked_side, res.get("winning_outcome"))
+            if outcome is False:
+                # Naked leg lost — book the cost basis with no payout.
+                self.capital_manager.record_naked_resolution(
+                    cid, won=False, redeemed_payout=0.0
+                )
+            # outcome True  -> winner not yet redeemable; let the redeem path get it.
+            # outcome None  -> winner undetermined; revisit next cycle.
 
     async def run_continuous(self) -> None:
         """

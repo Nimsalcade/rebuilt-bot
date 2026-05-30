@@ -122,6 +122,15 @@ class WindowFillSummary:
         return self.total_invested - self.merged_usdc_cost_basis
 
     @property
+    def naked_shares(self) -> float:
+        """Leftover unmatched shares after merging (all on the lean side).
+
+        up_shares/down_shares are net of merged pairs, so the larger of the two
+        is the naked leftover that settles at resolution.
+        """
+        return max(self.up_shares, self.down_shares)
+
+    @property
     def lean_direction(self) -> Optional[str]:
         if self.up_shares > self.down_shares:
             return "UP"

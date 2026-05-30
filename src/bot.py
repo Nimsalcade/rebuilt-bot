@@ -138,6 +138,15 @@ class TradingBot:
         # We track this net figure so _can_afford() gives accurate pre-flight checks.
         self._cached_balance_micro: Optional[int] = None
         self._balance_cached_at: float = 0.0
+        # Optimistic credit for freshly-merged USDC that has not yet shown up in
+        # an on-chain balance read. MergeEngine increments this so redeployment
+        # isn't throttled by the 30s balance cache. Every authoritative balance
+        # read (_refresh_balance / _record_balance_from_error) resets it to 0,
+        # because the fresh on-chain figure already includes any settled
+        # proceeds. Without that reset the accumulator only ever grows and the
+        # live balance inflates without bound, driving over-deployment of cash
+        # the wallet does not have. (See project context §7.)
+        self.pending_merge_proceeds: float = 0.0
         # Suppress repeated "insufficient balance" warnings spam.
         self._last_insufficient_log_at: float = 0.0
 
@@ -266,6 +275,11 @@ class TradingBot:
         if balance is not None:
             self._cached_balance_micro = balance
             self._balance_cached_at = time.monotonic()
+            # This live on-chain read already reflects every merge that has
+            # settled, so discard the optimistic merge-proceeds accumulator.
+            # Keeping it would double-count those proceeds on top of the
+            # refreshed balance and inflate the figure that drives sizing.
+            self.pending_merge_proceeds = 0.0
         return self._cached_balance_micro
 
     def _available_balance_micro(self) -> Optional[int]:
@@ -335,6 +349,10 @@ class TradingBot:
         net = max(0, gross - matched - active)
         self._cached_balance_micro = net
         self._balance_cached_at = time.monotonic()
+        # This net figure comes straight from a live server rejection and is
+        # authoritative, so reconcile away the optimistic merge credit too —
+        # the same double-count guard as _refresh_balance.
+        self.pending_merge_proceeds = 0.0
 
         self.logger.debug(
             "Balance updated from error | gross=$%.4f matched=$%.4f "

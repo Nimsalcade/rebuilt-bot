@@ -31,23 +31,20 @@ class SpreadFarmerStrategy:
             paper_trader=paper_trader,
         )
 
+        # The AutoRedeemer books resolved naked legs straight into the
+        # CapitalManager's realized-PnL tracker. It needs the capital manager
+        # (cost-basis registry + booking) and the gamma client (on-chain
+        # resolution / winning-outcome lookup for losing legs). Booking happens
+        # per-position inside the redeemer where the conditionId and the real
+        # claimed value are known — not via a wrapper that only sees a count.
         self.auto_redeemer = AutoRedeemer(
             wallet_address=config.safe_address,
-            enabled=not dry_run
+            enabled=not dry_run,
+            capital_manager=self.window_manager.capital_mgr,
+            gamma_client=self.window_manager.gamma,
         )
         if not dry_run and hasattr(config, 'private_key'):
             self.auto_redeemer.initialize_web3(config.private_key)
-
-        # Hook redemption into the CapitalManager's Realized PnL tracker
-        # Every resolved and redeemed naked share returns exactly $1.00
-        original_check = self.auto_redeemer.check_and_redeem
-        async def hooked_check_and_redeem():
-            processed = await original_check()
-            if processed > 0:
-                # 1 share = $1.00 redeemed
-                self.window_manager.capital_mgr.record_redemption(float(processed))
-            return processed
-        self.auto_redeemer.check_and_redeem = hooked_check_and_redeem
 
 
     async def run(self):

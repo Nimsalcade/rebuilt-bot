@@ -212,10 +212,19 @@ class WindowManager:
                     summary = session.task.result()
                     session.summary = summary
                     if summary:
-                        # Report to CapitalManager for Realized PnL tracking (Merged portion only)
+                        # Book the MERGED portion now (guaranteed small positive).
                         self.capital_mgr.record_window_resolution(
-                            gross_spent=summary.merged_usdc_cost_basis,
-                            merged_returned=summary.merged_usdc
+                            merged_cost_basis=summary.merged_usdc_cost_basis,
+                            merged_returns=summary.merged_usdc,
+                        )
+                        # Register the NAKED leftover for resolution-time booking
+                        # (both winners and losers) so the stop-loss can see real
+                        # losses. Booked later by the AutoRedeemer resolver sweep.
+                        self.capital_mgr.register_naked_position(
+                            condition_id=session.market.condition_id,
+                            naked_side=summary.lean_direction,
+                            naked_shares=summary.naked_shares,
+                            naked_cost_basis=summary.naked_cost_basis,
                         )
                         if self.paper_trader:
                             self.paper_trader.queue_for_settlement(summary)

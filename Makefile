@@ -8,7 +8,7 @@
 #   make test      - Run unit tests
 #   make shell     - Open shell with venv activated
 
-.PHONY: setup run run-live test shell clean help
+.PHONY: setup run run-live test test-live test-all reconcile shell clean help
 
 # Default Python
 PYTHON := python3
@@ -91,6 +91,12 @@ test-live: $(VENV)/bin/activate
 test-all: $(VENV)/bin/activate
 	@echo "$(GREEN)Running all tests...$(NC)"
 	$(PYTEST) tests/ -v
+
+# Arithmetic proof for the realized-PnL / balance accounting (project §10.5).
+# Standalone — no pytest or SDK install required. Run before any live session.
+reconcile:
+	@echo "$(GREEN)Reconciling accounting against hand calculation...$(NC)"
+	python3 tests/test_accounting_reconciliation.py
 
 # =============================================================================
 # DEVELOPMENT
