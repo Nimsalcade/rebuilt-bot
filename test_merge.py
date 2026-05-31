@@ -42,7 +42,7 @@ def main() -> int:
     condition_id = sys.argv[1]
     amount = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
 
-    config = Config.from_env()
+    config = Config.load_with_env("config/production.yaml")
     bot = create_bot_from_config(config)
 
     # 1. Validate the builder triple up front with an actionable message.

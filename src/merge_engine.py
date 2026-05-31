@@ -273,7 +273,7 @@ class MergeEngine:
                         chain_id=137,
                         private_key=self.bot.config.private_key,
                         builder_config=builder_config,
-                        relay_tx_type=RelayerTxType.SAFE
+                        relay_tx_type=RelayerTxType.PROXY
                     )
                     
                     # CTF Address for standard markets, NegRiskAdapter for neg risk
