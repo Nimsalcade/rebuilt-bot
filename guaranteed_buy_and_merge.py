@@ -13,24 +13,12 @@ def main():
     bot = create_bot_from_config(config)
     engine = MergeEngine(bot, dry_run=False)
 
-    log.info("Fetching active markets to find a pair to test...")
-    # Get active markets from clob client
-    markets = bot.clob.get_markets()
-    market = None
-    
-    # We want a basic binary market
-    for m in markets.get("data", []):
-        if m.get("active") and m.get("closed") is False and len(m.get("tokens", [])) == 2:
-            market = m
-            break
-            
-    if not market:
-        log.error("No active binary market found!")
-        return 1
-        
-    condition_id = market.get('condition_id')
-    question = market.get('question')
-    tokens = market.get('tokens')
+    condition_id = "0xf398b0e5016eeaee9b0885ed84012b6dc91269ac10d3b59d60722859c2e30b2f"
+    question = "Will Harvey Weinstein be sentenced to no prison time?"
+    tokens = [
+        {"token_id": "24327803960645909378149041810697343640752122608192367041827900158592826352552"},
+        {"token_id": "86488478623677188352872801318507143761188967461168408688159600382919967378486"}
+    ]
     
     log.info("==================================================")
     log.info(f"Target Market: {question}")
