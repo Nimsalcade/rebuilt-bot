@@ -276,50 +276,48 @@ class MergeEngine:
                         relay_tx_type=RelayerTxType.PROXY
                     )
                     
-                    # 1. NegRiskAdapter Address
-                    NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
+                    # 1. CTF Exchange Address (Underlying CTF contract)
+                    CTF_EXCHANGE = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
                     
-                    # For NegRiskAdapter, the "_conditionId" argument MUST be the market's Question ID (marketId)
-                    # We must fetch it from Gamma API since we only have the CTF condition_id here.
-                    target_id = condition_id
-                    try:
-                        import requests
-                        gamma_url = f"https://gamma-api.polymarket.com/markets?condition_id={condition_id}"
-                        resp = requests.get(gamma_url, headers={"User-Agent": "Mozilla/5.0"}).json()
-                        if resp and isinstance(resp, list) and len(resp) > 0:
-                            if resp[0].get("questionID"):
-                                target_id = resp[0]["questionID"]
-                                self.logger.info(f"Resolved NegRisk Market ID: {target_id}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to fetch market ID: {e}")
+                    # 2. pUSD Address (Polymarket USD)
+                    PUSD = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
 
                     # Build the data payload for the merge transaction
-                    # We use the 2-argument ABI which is what NegRiskAdapter uses.
+                    # We use the 5-argument ABI directly on the CTF Exchange
                     tx_data = Web3().eth.contract(
-                        address=NEG_RISK_ADAPTER,
+                        address=CTF_EXCHANGE,
                         abi=[{
                             "name": "mergePositions",
                             "type": "function",
                             "inputs": [
-                                {"name": "_conditionId", "type": "bytes32"},
-                                {"name": "_amount", "type": "uint256"}
+                                {"name": "collateralToken", "type": "address"},
+                                {"name": "parentCollectionId", "type": "bytes32"},
+                                {"name": "conditionId", "type": "bytes32"},
+                                {"name": "partition", "type": "uint256[]"},
+                                {"name": "amount", "type": "uint256"}
                             ],
                             "outputs": []
                         }]
                     ).encode_abi(
                         abi_element_identifier="mergePositions", 
-                        args=[Web3.to_bytes(hexstr=target_id), merge_arg]
+                        args=[
+                            Web3.to_checksum_address(PUSD), # pUSD
+                            b'\x00' * 32, # parentCollectionId
+                            Web3.to_bytes(hexstr=condition_id), # conditionId
+                            [1, 2], # partition for binary market
+                            merge_arg # amount
+                        ]
                     )
 
                     # RelayClient.execute() consumes Transaction dataclasses
                     merge_tx = Transaction(
-                        to=NEG_RISK_ADAPTER,
+                        to=CTF_EXCHANGE,
                         data=tx_data,
                         value="0",
                     )
 
                     # Execute via the Relayer SDK (synchronous call wrapping in asyncio)
-                    self.logger.info("⏳ Merge submitted to Relayer (NegRiskAdapter 2-arg). Waiting for confirmation...")
+                    self.logger.info("⏳ Merge submitted to Relayer (CTF + pUSD). Waiting for confirmation...")
                     response = await asyncio.to_thread(client.execute, [merge_tx], "Merge pairs")
 
                     # The response already carries the submitted tx hash; capture it
