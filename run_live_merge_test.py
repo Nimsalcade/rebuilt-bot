@@ -63,6 +63,16 @@ def main() -> int:
     size = 5.0
     buy_price = 0.99
     
+    # Check USDC balance first
+    try:
+        usdc_bal_dict = bot.get_balance()
+        usdc_bal = float(usdc_bal_dict.get('usdc', 0)) if isinstance(usdc_bal_dict, dict) else float(usdc_bal_dict)
+        log.info(f"Proxy Wallet USDC Balance: ${usdc_bal:.2f}")
+        if usdc_bal < (size * buy_price * 2):
+            log.error(f"Insufficient USDC. Need at least ${size * buy_price * 2:.2f}")
+    except Exception as e:
+        log.warning(f"Could not fetch balance: {e}")
+
     log.info(f"\n[1/3] BUYING {size} UP SHARES...")
     up_res = bot.place_order(up_token, price=buy_price, size=size, side="BUY", order_type="FOK")
     if not up_res:
@@ -81,8 +91,26 @@ def main() -> int:
     log.info("\nWaiting 4 seconds for fills to settle on the subgraph...")
     time.sleep(4)
 
-    log.info(f"\n[3/3] MERGING THE PAIR GASLESSLY...")
-    result = engine._execute_merge_unified_sdk(condition_id, size)
+    # Verify size matched
+    try:
+        o1 = bot.clob.get_order(up_res['orderID'])
+        o2 = bot.clob.get_order(down_res['orderID'])
+        s1 = float(o1.get("size_matched", 0)) if o1 else 0
+        s2 = float(o2.get("size_matched", 0)) if o2 else 0
+        log.info(f"UP Matched: {s1} shares")
+        log.info(f"DOWN Matched: {s2} shares")
+        
+        # We need the min of the two matching sizes
+        merge_size = min(s1, s2)
+        if merge_size == 0:
+            log.error("Did not acquire shares on both sides. Cannot merge!")
+            return 1
+    except Exception as e:
+        log.warning(f"Could not fetch match sizes: {e}")
+        merge_size = size
+
+    log.info(f"\n[3/3] MERGING THE PAIR GASLESSLY ({merge_size} shares)...")
+    result = engine._execute_merge_unified_sdk(condition_id, merge_size)
 
     if result.success:
         log.info(f"✅ MERGE MINED — tx_hash={result.tx_hash} | merged={result.merged_shares} | usdc={result.usdc_returned}")
