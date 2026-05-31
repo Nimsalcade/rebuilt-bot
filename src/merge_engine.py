@@ -281,35 +281,50 @@ class MergeEngine:
                     # We will attempt NegRiskAdapter first, as that is standard for newer pairs.
                     NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
                     
-                    # Build the data payload for the merge transaction
+                    # 1. CTF Exchange Address (holds the ERC1155 share tokens)
+                    CTF_EXCHANGE = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+                    
+                    # Encode setApprovalForAll(address operator, bool approved)
+                    approve_data = Web3().eth.contract(
+                        address=CTF_EXCHANGE,
+                        abi=[{
+                            "name": "setApprovalForAll",
+                            "type": "function",
+                            "inputs": [
+                                {"name": "operator", "type": "address"},
+                                {"name": "approved", "type": "bool"}
+                            ],
+                            "outputs": []
+                        }]
+                    ).encode_abi(
+                        abi_element_identifier="setApprovalForAll",
+                        args=[Web3.to_checksum_address(NEG_RISK_ADAPTER), True]
+                    )
+
+                    approve_tx = Transaction(
+                        to=CTF_EXCHANGE,
+                        data=approve_data,
+                        value="0",
+                    )
+
+                    # Build the data payload for the merge transaction (NegRiskAdapter uses 2-args)
                     tx_data = Web3().eth.contract(
                         address=NEG_RISK_ADAPTER,
                         abi=[{
                             "name": "mergePositions",
                             "type": "function",
                             "inputs": [
-                                {"name": "collateralToken", "type": "address"},
-                                {"name": "parentCollectionId", "type": "bytes32"},
-                                {"name": "conditionId", "type": "bytes32"},
-                                {"name": "partition", "type": "uint256[]"},
-                                {"name": "amount", "type": "uint256"}
+                                {"name": "_conditionId", "type": "bytes32"},
+                                {"name": "_amount", "type": "uint256"}
                             ],
                             "outputs": []
                         }]
                     ).encode_abi(
                         abi_element_identifier="mergePositions", 
-                        args=[
-                            Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"), # USDC
-                            b'\x00' * 32, # parentCollectionId
-                            Web3.to_bytes(hexstr=condition_id), # conditionId
-                            [1, 2], # partition for binary market
-                            merge_arg # amount
-                        ]
+                        args=[Web3.to_bytes(hexstr=condition_id), merge_arg]
                     )
 
-                    # RelayClient.execute() consumes Transaction dataclasses and
-                    # reads t.to / t.data / t.value as attributes — a plain dict
-                    # raises AttributeError, so build the model the SDK expects.
+                    # RelayClient.execute() consumes Transaction dataclasses
                     merge_tx = Transaction(
                         to=NEG_RISK_ADAPTER,
                         data=tx_data,
@@ -317,8 +332,9 @@ class MergeEngine:
                     )
 
                     # Execute via the Relayer SDK (synchronous call wrapping in asyncio)
+                    # We bundle the approve_tx and merge_tx so they execute atomically gas-free!
                     self.logger.info("⏳ Merge submitted to Relayer. Waiting for confirmation...")
-                    response = await asyncio.to_thread(client.execute, [merge_tx], "Merge pairs")
+                    response = await asyncio.to_thread(client.execute, [approve_tx, merge_tx], "Merge pairs")
 
                     # The response already carries the submitted tx hash; capture it
                     # up front so we still have a reference even if polling times out.
