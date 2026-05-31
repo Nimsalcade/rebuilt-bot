@@ -24,8 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 log = logging.getLogger("live_merge_test")
 
 def get_active_market():
-    # Fetch top active markets by volume
-    url = "https://gamma-api.polymarket.com/events?closed=false&limit=20&active=true"
+    url = "https://gamma-api.polymarket.com/markets?closed=false&limit=20&active=true"
     res = requests.get(url).json()
     
     for event in res:
