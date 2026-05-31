@@ -278,39 +278,31 @@ class MergeEngine:
                     
                     # CTF Address for standard markets, NegRiskAdapter for neg risk
                     # Polymarket routes most new markets via NegRiskAdapter.
-                    # 1. CTF Exchange Address
-                    CTF_EXCHANGE = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+                    # We will attempt NegRiskAdapter first, as that is standard for newer pairs.
+                    NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
                     
-                    # Build the data payload for the merge transaction on the CTF Exchange directly
-                    # This uses the exact same 5-argument ABI and target as the old poly_merger.py!
+                    # Build the data payload for the merge transaction
                     tx_data = Web3().eth.contract(
-                        address=CTF_EXCHANGE,
+                        address=NEG_RISK_ADAPTER,
                         abi=[{
                             "name": "mergePositions",
                             "type": "function",
                             "inputs": [
-                                {"name": "collateralToken", "type": "address"},
-                                {"name": "parentCollectionId", "type": "bytes32"},
-                                {"name": "conditionId", "type": "bytes32"},
-                                {"name": "partition", "type": "uint256[]"},
-                                {"name": "amount", "type": "uint256"}
+                                {"name": "_conditionId", "type": "bytes32"},
+                                {"name": "_amount", "type": "uint256"}
                             ],
                             "outputs": []
                         }]
                     ).encode_abi(
                         abi_element_identifier="mergePositions", 
-                        args=[
-                            Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"), # USDC
-                            b'\x00' * 32, # parentCollectionId
-                            Web3.to_bytes(hexstr=condition_id), # conditionId
-                            [1, 2], # partition for binary market
-                            merge_arg # amount
-                        ]
+                        args=[Web3.to_bytes(hexstr=condition_id), merge_arg]
                     )
 
-                    # RelayClient.execute() consumes Transaction dataclasses
+                    # RelayClient.execute() consumes Transaction dataclasses and
+                    # reads t.to / t.data / t.value as attributes — a plain dict
+                    # raises AttributeError, so build the model the SDK expects.
                     merge_tx = Transaction(
-                        to=CTF_EXCHANGE,
+                        to=NEG_RISK_ADAPTER,
                         data=tx_data,
                         value="0",
                     )
