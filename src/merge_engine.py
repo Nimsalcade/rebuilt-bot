@@ -86,6 +86,58 @@ class MergeEngine:
         self._last_merge_at: float = 0.0
         self._total_merged_usdc: float = 0.0
         self._total_merge_count: int = 0
+        # Circuit breaker: once the builder credentials are proven invalid the
+        # relayer will reject EVERY merge identically, so retrying every ~2s
+        # just floods the log (hundreds of identical lines in the live run).
+        # Trip this on the first auth failure, log once, and stop hammering.
+        self._merge_disabled: bool = False
+        self._merge_disabled_reason: str = ""
+        # Validate builder creds once at startup so a missing/blank triple is a
+        # single clear message naming the exact env vars — not a per-merge spam.
+        if not dry_run:
+            self._check_builder_creds_at_startup()
+
+    def _check_builder_creds_at_startup(self) -> None:
+        """Validate the BUILDER_API_* triple before any merge is attempted.
+
+        The gasless relayer authenticates via BuilderApiKeyCreds(key, secret,
+        passphrase), issued on Polymarket's *Builders* settings tab and shown
+        only at key-creation time. The signing SDK rejects any blank field, so
+        catch that here once with an actionable message instead of letting it
+        raise on every merge.
+        """
+        cfg = self.bot.config
+        missing = [
+            name for name, val in (
+                ("BUILDER_API_KEY", getattr(cfg, "builder_api_key", "")),
+                ("BUILDER_API_SECRET", getattr(cfg, "builder_api_secret", "")),
+                ("BUILDER_API_PASSPHRASE", getattr(cfg, "builder_api_passphrase", "")),
+            )
+            if not (val or "").strip()
+        ]
+        if missing:
+            self._merge_disabled = True
+            self._merge_disabled_reason = "missing builder credentials: " + ", ".join(missing)
+            self.logger.error(
+                "MERGE DISABLED — %s. Set these in .env from Polymarket Settings → "
+                "Builders → Create New (key/secret/passphrase are shown only at "
+                "creation time). Auto-merge is OFF until they are present.",
+                self._merge_disabled_reason,
+            )
+
+    @staticmethod
+    def _is_auth_error(error: Optional[str]) -> bool:
+        """True when a merge failure is a permanent credential/auth rejection."""
+        if not error:
+            return False
+        e = error.lower()
+        return (
+            "builder credential" in e          # "invalid local builder credentials!"
+            or "builder creds" in e            # "invalid builder creds configured!"
+            or "could not generate builder headers" in e
+            or "unauthorized" in e
+            or "401" in e
+        )
 
     async def try_merge(
         self,
@@ -104,6 +156,12 @@ class MergeEngine:
             MergeResult with amount merged and USDC returned
         """
         now = time.time()
+
+        # Circuit breaker: if builder creds are known-bad, do nothing (already
+        # logged once at startup / first failure). Prevents the per-cycle flood.
+        if self._merge_disabled:
+            return MergeResult(success=False, merged_shares=0, usdc_returned=0,
+                               error=self._merge_disabled_reason)
 
         # Rate-limit: don't merge more than once per MERGE_COOLDOWN_S
         if (now - self._last_merge_at) < MERGE_COOLDOWN_S:
@@ -151,14 +209,27 @@ class MergeEngine:
                 summary.merged_usdc += result.usdc_returned
                 self._total_merged_usdc += result.usdc_returned
                 self._total_merge_count += 1
-                
+
                 # Instantly credit the merged USDC to the pending proceeds accumulator to unthrottle redeployment
                 if hasattr(self.bot, 'pending_merge_proceeds'):
                     self.bot.pending_merge_proceeds += result.usdc_returned
-                    
+
                 print(terminal_ui.fmt_merge(summary.market_id, result.merged_shares, result.usdc_returned), flush=True)
             else:
-                self.logger.warning("MERGE FAILED: %s", result.error)
+                # An auth/credential failure is permanent for this process — the
+                # relayer will reject every subsequent merge the same way. Trip
+                # the breaker so we log it once instead of every ~2s.
+                if self._is_auth_error(result.error):
+                    self._merge_disabled = True
+                    self._merge_disabled_reason = result.error or "invalid builder credentials"
+                    self.logger.error(
+                        "MERGE DISABLED — relayer rejected builder credentials (%s). "
+                        "Re-create the key on Polymarket Settings → Builders and set "
+                        "BUILDER_API_KEY/SECRET/PASSPHRASE in .env. Auto-merge is OFF.",
+                        self._merge_disabled_reason,
+                    )
+                else:
+                    self.logger.warning("MERGE FAILED: %s", result.error)
 
             return result
 

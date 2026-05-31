@@ -46,6 +46,7 @@ TARGET_COMBINED    = 0.97     # max sum of our two resting bids = the merge prof
 TICK               = 0.01     # Polymarket min price increment
 REQUOTE_INTERVAL_S = 3.0      # how often we re-price (TUNE LIVE — start at 3s)
 STALE_DRIFT        = 0.02     # re-quote a side if its resting price drifts this far from target
+MIN_ORDER_SHARES   = 5        # Polymarket rejects orders below 5 shares ("Size (n) lower than the minimum: 5")
 
 # --- Dollar-targeted sizing per rung ---
 RUNG_DOLLAR_TARGETS = [
@@ -184,7 +185,10 @@ class MakerLoop:
         shares = math.ceil(target / price)
         while shares * price < 1.00:
             shares += 1
-        return shares
+        # Polymarket also enforces a 5-share minimum regardless of notional, so
+        # floor here — otherwise high-priced rungs (small share counts) get
+        # rejected with "Size (n) lower than the minimum: 5".
+        return max(shares, MIN_ORDER_SHARES)
 
     async def run(
         self,
@@ -513,6 +517,10 @@ class MakerLoop:
         """Post a single resting GTC maker bid at `price`."""
         shares = self._dollar_target_shares(price)
 
+        # Hard guard against the exchange 5-share minimum (avoids the reject flood).
+        if shares < MIN_ORDER_SHARES:
+            return False
+
         if self.dry_run:
             fake_id = f"dry_{side}_{int(price*100)}_{int(time.time()*1000)%10000}"
             active_orders[fake_id] = OrderRecord(
@@ -655,13 +663,21 @@ class MakerLoop:
         up_avg = summary.up_avg_cost
         dn_avg = summary.down_avg_cost
         c_str = f"${up_avg + dn_avg:.2f}" if up_avg and dn_avg else "n/a"
-        
+
+        # Matched fraction = 2·min(up,dn)/(up+dn): the share of inventory that is
+        # paired (and thus mergeable / immune to adverse selection). gabagool ~94%;
+        # a one-sided, adversely-selected window collapses toward 0%.
+        up_sh, dn_sh = summary.up_shares, summary.down_shares
+        total_sh = up_sh + dn_sh
+        matched_frac = (2.0 * min(up_sh, dn_sh) / total_sh) if total_sh > 0 else 0.0
+
         self.logger.info(
-            "[%02d:%02d] %s | %s | UP: %d sh @ $%.2f | DN: %d sh @ $%.2f | Comb: %s",
+            "[%02d:%02d] %s | %s | UP: %d sh @ $%.2f | DN: %d sh @ $%.2f | Comb: %s | Matched: %.0f%%",
             int(elapsed // 60), int(elapsed % 60),
             summary.market_id[:16],
             state.value,
             summary.up_shares, up_avg,
             summary.down_shares, dn_avg,
-            c_str
+            c_str,
+            matched_frac * 100.0,
         )
