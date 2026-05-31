@@ -102,12 +102,16 @@ def main() -> int:
         
         # We need the min of the two matching sizes
         merge_size = min(s1, s2)
-        if merge_size == 0:
-            log.error("Did not acquire shares on both sides. Cannot merge!")
+        if merge_size < 5.0:
+            log.error(f"Did not acquire 5.0 shares on both sides (s1={s1}, s2={s2}). Cannot merge!")
             return 1
+            
+        # Hardcode merge size to exactly 5.0 to avoid ANY floating-point precision/rounding issues
+        # that could cause an InsufficientBalance revert.
+        merge_size = 5.0
     except Exception as e:
         log.warning(f"Could not fetch match sizes: {e}")
-        merge_size = size
+        merge_size = 5.0
 
     log.info(f"\n[3/3] MERGING THE PAIR GASLESSLY ({merge_size} shares)...")
     result = engine._execute_merge_unified_sdk(condition_id, merge_size)
