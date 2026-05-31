@@ -32,17 +32,22 @@ def main():
     log.info("Placing aggressive BUY orders for 1.0 shares of BOTH tokens (price=0.99)...")
     
     try:
-        args1 = OrderArgs(price=0.99, size=1.0, side="BUY", token_id=tokens[0]["token_id"])
-        r1 = bot.clob.create_and_post_order(args1, order_type=OrderType.FOK)
-        
-        args2 = OrderArgs(price=0.99, size=1.0, side="BUY", token_id=tokens[1]["token_id"])
-        r2 = bot.clob.create_and_post_order(args2, order_type=OrderType.FOK)
+        r1 = bot.place_order(tokens[0]["token_id"], price=0.99, size=1.0, side="BUY", order_type="FOK")
+        r2 = bot.place_order(tokens[1]["token_id"], price=0.99, size=1.0, side="BUY", order_type="FOK")
     except Exception as e:
         log.error(f"Failed to submit orders: {e}")
         return 1
 
-    size1 = float(r1.get("size_matched", 0)) if isinstance(r1, dict) else 0
-    size2 = float(r2.get("size_matched", 0)) if isinstance(r2, dict) else 0
+    # bot.place_order returns a dictionary containing orderID. But it doesn't return size_matched.
+    # We must fetch the order by ID to see size_matched.
+    size1 = 0
+    size2 = 0
+    if r1 and r1.get("orderID"):
+        o1 = bot.clob.get_order(r1["orderID"])
+        size1 = float(o1.get("size_matched", 0)) if isinstance(o1, dict) else 0
+    if r2 and r2.get("orderID"):
+        o2 = bot.clob.get_order(r2["orderID"])
+        size2 = float(o2.get("size_matched", 0)) if isinstance(o2, dict) else 0
     
     log.info(f"Leg 1 (YES) Matched: {size1} shares")
     log.info(f"Leg 2 (NO) Matched: {size2} shares")
