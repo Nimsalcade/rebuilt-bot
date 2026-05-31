@@ -29,7 +29,7 @@ def get_active_market():
     
     for event in res:
         # We need a standard 2-outcome market that is active and has an orderbook
-        if event.get("enableOrderBook") and not event.get("closed") and event.get("active"):
+        if event.get("enableOrderBook") and not event.get("closed") and event.get("active") and event.get("negRisk"):
             try:
                 tokens = eval(event.get("clobTokenIds", "[]"))
                 if len(tokens) == 2:
