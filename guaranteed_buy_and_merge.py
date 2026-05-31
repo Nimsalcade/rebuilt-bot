@@ -25,7 +25,14 @@ def main():
     log.info(f"Condition ID: {condition_id}")
     log.info("==================================================")
     
-    # We will buy 1.0 share of both sides at max price (0.99)
+    # Authorize clob client
+    try:
+        creds = bot.clob.create_or_derive_api_creds()
+        bot.clob.set_api_creds(creds)
+    except Exception as e:
+        log.warning(f"Could not setup CLOB creds: {e}")
+
+    log.info("Placing aggressive BUY orders for 1.0 shares of BOTH tokens (price=0.99)...")
     # Using FOK (Fill Or Kill) to ensure we don't leave lingering open orders
     from py_clob_client.clob_types import OrderArgs, OrderType
     
