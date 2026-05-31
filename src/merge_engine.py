@@ -276,15 +276,17 @@ class MergeEngine:
                         relay_tx_type=RelayerTxType.PROXY
                     )
                     
-                    # 1. CTF Exchange Address
-                    CTF_EXCHANGE = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+                    # 1. NegRiskAdapter Address
+                    NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
                     
                     # 2. Native USDC Address (New Polymarket Standard)
                     NATIVE_USDC = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
                     
-                    # Build the data payload for the merge transaction on the CTF Exchange directly
+                    # Build the data payload for the merge transaction
+                    # We use the 5-argument ABI which is what ConditionalTokens uses.
+                    # NegRiskAdapter mimics the interface to pass through cleanly.
                     tx_data = Web3().eth.contract(
-                        address=CTF_EXCHANGE,
+                        address=NEG_RISK_ADAPTER,
                         abi=[{
                             "name": "mergePositions",
                             "type": "function",
@@ -310,13 +312,13 @@ class MergeEngine:
 
                     # RelayClient.execute() consumes Transaction dataclasses
                     merge_tx = Transaction(
-                        to=CTF_EXCHANGE,
+                        to=NEG_RISK_ADAPTER,
                         data=tx_data,
                         value="0",
                     )
 
                     # Execute via the Relayer SDK (synchronous call wrapping in asyncio)
-                    self.logger.info("⏳ Merge submitted to Relayer (CTF Native USDC). Waiting for confirmation...")
+                    self.logger.info("⏳ Merge submitted to Relayer (NegRiskAdapter + Native USDC). Waiting for confirmation...")
                     response = await asyncio.to_thread(client.execute, [merge_tx], "Merge pairs")
 
                     # The response already carries the submitted tx hash; capture it
