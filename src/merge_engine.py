@@ -276,16 +276,17 @@ class MergeEngine:
                         relay_tx_type=RelayerTxType.PROXY
                     )
                     
-                    # 1. CTF Exchange Address (Underlying CTF contract)
-                    CTF_EXCHANGE = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+                    # 1. NegRiskAdapter Address
+                    NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
                     
-                    # 2. pUSD Address (Polymarket USD)
-                    PUSD = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
+                    # 2. Native USDC Address (New Polymarket Standard)
+                    NATIVE_USDC = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 
                     # Build the data payload for the merge transaction
-                    # We use the 5-argument ABI directly on the CTF Exchange
+                    # We use the 5-argument ABI which is what ConditionalTokens uses.
+                    # NegRiskAdapter mimics the interface to pass through cleanly.
                     tx_data = Web3().eth.contract(
-                        address=CTF_EXCHANGE,
+                        address=NEG_RISK_ADAPTER,
                         abi=[{
                             "name": "mergePositions",
                             "type": "function",
@@ -301,7 +302,7 @@ class MergeEngine:
                     ).encode_abi(
                         abi_element_identifier="mergePositions", 
                         args=[
-                            Web3.to_checksum_address(PUSD), # pUSD
+                            Web3.to_checksum_address(NATIVE_USDC), # Native USDC
                             b'\x00' * 32, # parentCollectionId
                             Web3.to_bytes(hexstr=condition_id), # conditionId
                             [1, 2], # partition for binary market
@@ -311,13 +312,13 @@ class MergeEngine:
 
                     # RelayClient.execute() consumes Transaction dataclasses
                     merge_tx = Transaction(
-                        to=CTF_EXCHANGE,
+                        to=NEG_RISK_ADAPTER,
                         data=tx_data,
                         value="0",
                     )
 
                     # Execute via the Relayer SDK (synchronous call wrapping in asyncio)
-                    self.logger.info("⏳ Merge submitted to Relayer (CTF + pUSD). Waiting for confirmation...")
+                    self.logger.info("⏳ Merge submitted to Relayer (NegRiskAdapter + Native USDC 5-arg). Waiting for confirmation...")
                     response = await asyncio.to_thread(client.execute, [merge_tx], "Merge pairs")
 
                     # The response already carries the submitted tx hash; capture it
