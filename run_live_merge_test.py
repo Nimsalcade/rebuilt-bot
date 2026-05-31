@@ -42,6 +42,7 @@ def main() -> int:
     log.info("Loading config and initializing bot...")
     config = Config.load_with_env("config/production.yaml")
     bot = create_bot_from_config(config)
+    bot.connect()
     engine = MergeEngine(bot, dry_run=False)
 
     log.info("Searching for an active 2-outcome market...")
