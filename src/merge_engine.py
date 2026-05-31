@@ -288,14 +288,23 @@ class MergeEngine:
                             "name": "mergePositions",
                             "type": "function",
                             "inputs": [
-                                {"name": "_conditionId", "type": "bytes32"},
-                                {"name": "_amount", "type": "uint256"}
+                                {"name": "collateralToken", "type": "address"},
+                                {"name": "parentCollectionId", "type": "bytes32"},
+                                {"name": "conditionId", "type": "bytes32"},
+                                {"name": "partition", "type": "uint256[]"},
+                                {"name": "amount", "type": "uint256"}
                             ],
                             "outputs": []
                         }]
                     ).encode_abi(
                         abi_element_identifier="mergePositions", 
-                        args=[Web3.to_bytes(hexstr=condition_id), merge_arg]
+                        args=[
+                            Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"), # USDC
+                            b'\x00' * 32, # parentCollectionId
+                            Web3.to_bytes(hexstr=condition_id), # conditionId
+                            [1, 2], # partition for binary market
+                            merge_arg # amount
+                        ]
                     )
 
                     # RelayClient.execute() consumes Transaction dataclasses and
